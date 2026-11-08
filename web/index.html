@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APK2PC Studio</title>
+<link rel="stylesheet" href="/style.css">
+<script>
+/* 兜底：脚本自身语法错误也要能看见 */
+window.addEventListener("error", function (ev) {
+  try {
+    document.title = "ERR: " + (ev.message || "script error");
+    var b = document.getElementById("jserr0");
+    if (!b) {
+      b = document.createElement("pre");
+      b.id = "jserr0";
+      b.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:999;margin:0;padding:8px 12px;" +
+        "background:#3a1418;color:#ffc9c9;font:11px/1.6 monospace;border-top:1px solid #6a2c31;" +
+        "max-height:45vh;overflow:auto;white-space:pre-wrap";
+      document.body.appendChild(b);
+    }
+    b.textContent += ev.message + "  @" + ev.filename + ":" + ev.lineno + "\n";
+  } catch (e) {}
+}, true);
+window.addEventListener("unhandledrejection", function (ev) {
+  try {
+    var r = ev.reason || {};
+    document.title = "REJ: " + (r.message || r);
+  } catch (e) {}
+});
+</script>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">A<span>2</span>PC</div>
+      <div class="brand-text">
+        <h1>APK2PC Studio</h1>
+        <p>解包 · 反编译 · 重建 · 签名 · 在电脑上跑起来</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="ver" id="ver">—</span>
+      <button class="btn ghost sm" id="btn-workspace">打开工作区</button>
+      <button class="btn ghost sm" id="btn-quit">退出</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <div class="grid">
+
+    <!-- ======================= 左栏 ======================= -->
+    <aside class="col-left">
+
+      <section class="card">
+        <div class="card-head">
+          <h2>目标 APK</h2>
+          <span class="tag" id="apk-size">—</span>
+        </div>
+        <div class="dropzone" id="dropzone">
+          <div class="dz-icon">APK</div>
+          <p class="dz-main">点击选择 APK 文件</p>
+          <p class="dz-sub">也可以把路径粘贴到下面</p>
+          <input id="apk-path" class="input" placeholder="C:\path\to\app.apk" spellcheck="false">
+          <div class="row gap8">
+            <button class="btn primary sm" id="btn-pick">浏览…</button>
+            <button class="btn sm" id="btn-scan">解析</button>
+          </div>
+        </div>
+        <div id="apk-info" class="kv hidden"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>运行设备</h2>
+          <div class="row gap6">
+            <button class="btn ghost xs" id="btn-dev-refresh">刷新</button>
+            <button class="btn ghost xs" id="btn-dev-start">启动模拟器</button>
+          </div>
+        </div>
+        <div id="devices" class="devices"><p class="muted sm">检测中…</p></div>
+        <label class="check sm" title="部分机器上 -fullscreen 会让模拟器秒退，默认关闭">
+          <input type="checkbox" id="opt-fullscreen"> 模拟器全屏（部分机器会启动失败）
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>工具链</h2><span class="tag" id="ready-tag">—</span></div>
+        <div id="tools" class="tools"></div>
+      </section>
+
+    </aside>
+
+    <!-- ======================= 右栏 ======================= -->
+    <main class="col-main">
+
+      <section class="card actions-card">
+        <div class="run-row">
+          <button class="btn primary lg" id="btn-full">一键全流程</button>
+          <div class="seg">
+            <button class="btn sm" data-act="decode">仅解包+Java</button>
+            <button class="btn sm" data-act="java">仅 Java</button>
+            <button class="btn sm" data-act="build">重建签名</button>
+            <button class="btn sm" data-act="run">直接运行</button>
+          </div>
+          <button class="btn danger sm hidden" id="btn-cancel">取消</button>
+        </div>
+        <div class="hint sm" id="run-hint">全流程 = 解包 → Java 源码 → 重建 → 签名 → 装机运行</div>
+        <div class="progress"><div class="bar" id="bar"></div></div>
+      </section>
+
+      <section class="card steps-card">
+        <div class="card-head">
+          <h2>流水线</h2>
+          <span class="tag" id="job-state">空闲</span>
+        </div>
+        <ol class="steps" id="steps"></ol>
+      </section>
+
+      <section class="card log-card">
+        <div class="card-head">
+          <h2>日志</h2>
+          <div class="row gap6">
+            <label class="check xs"><input type="checkbox" id="opt-autoscroll" checked> 跟随</label>
+            <button class="btn ghost xs" id="btn-copy-log">复制</button>
+            <button class="btn ghost xs" id="btn-clear-log">清屏</button>
+          </div>
+        </div>
+        <pre class="log" id="log"></pre>
+      </section>
+
+      <section class="card extra-card">
+        <div class="card-head"><h2>产物</h2></div>
+        <div class="extra-grid">
+          <div class="export-box">
+            <h3>导出</h3>
+            <button class="btn sm block" id="btn-export-gradle">生成 Android Studio 工程</button>
+            <button class="btn sm block" id="btn-export-launcher">生成独立 EXE 启动器</button>
+            <button class="btn ghost sm block" id="btn-open-out">打开输出目录</button>
+            <p class="muted xs" id="artifact-line">尚未生成产物</p>
+          </div>
+          <div class="shot-box">
+            <div class="row between">
+              <h3>设备画面</h3>
+              <button class="btn ghost xs" id="btn-shot">截屏</button>
+            </div>
+            <div class="shot" id="shot"><span class="muted xs">无画面</span></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="foot">
+    <span id="data-dir">—</span>
+    <span class="sep">·</span>
+    <span>本工具仅用于你自己拥有合法授权的应用</span>
+  </footer>
+  <div id="toasts" class="toasts"></div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

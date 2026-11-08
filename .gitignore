@@ -1,0 +1,25 @@
+# 构建产物
+build/
+build.old*/
+dist/
+*.spec
+__pycache__/
+*.py[cod]
+
+# 运行时产物（工作区、日志）
+logs/
+*.log
+
+# 测试用 APK / 签名中间件（体积大且不该入库）
+*.apk
+*.idsig
+
+# 第三方二进制：apktool.jar（约 15 MB）
+# 首次运行时会自动从 Maven 中央仓下载到 %LOCALAPPDATA%\APK2PCStudio\tools\
+vendor/apktool.jar
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
