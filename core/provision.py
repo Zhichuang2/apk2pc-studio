@@ -224,12 +224,12 @@ def ensure_sdkmanager(log: LogFn) -> Path:
     zip_path = C.TOOLS_DIR / "commandlinetools-win.zip"
     if not zip_path.exists():
         download(C.CMDLINE_TOOLS_ZIP, zip_path, log)
-    tmp = C.SDK_ROOT / "_clt_tmp"
+    tmp = C.sdk_root() / "_clt_tmp"
     if tmp.exists():
         shutil.rmtree(tmp, ignore_errors=True)
     unzip(zip_path, tmp, log)
     inner = ensure_single_dir(tmp, log)  # tmp/cmdline-tools
-    latest = C.SDK_ROOT / "cmdline-tools" / "latest"
+    latest = C.sdk_root() / "cmdline-tools" / "latest"
     if latest.exists():
         shutil.rmtree(latest, ignore_errors=True)
     latest.parent.mkdir(parents=True, exist_ok=True)
@@ -245,7 +245,7 @@ def ensure_sdkmanager(log: LogFn) -> Path:
 def accept_licenses(log: LogFn) -> None:
     sm = ensure_sdkmanager(log)
     log("info", "接受 Android SDK 许可协议…")
-    rc = run([sm, f"--sdk_root={C.SDK_ROOT}", "--licenses"], log,
+    rc = run([sm, f"--sdk_root={C.sdk_root()}", "--licenses"], log,
              stdin_text=("y\n" * 40), env=_java_env(), timeout=300)
     if rc != 0:
         log("warn", f"--licenses 返回 {rc}（一般无害，继续）")
@@ -254,7 +254,7 @@ def accept_licenses(log: LogFn) -> None:
 def install_sdk_packages(packages: list[str], log: LogFn) -> None:
     sm = ensure_sdkmanager(log)
     accept_licenses(log)
-    args = [sm, f"--sdk_root={C.SDK_ROOT}"] + packages
+    args = [sm, f"--sdk_root={C.sdk_root()}"] + packages
     log("info", "sdkmanager 安装: " + " ".join(packages))
     rc = run(args, log, stdin_text=("y\n" * 40), env=_java_env(), timeout=3600)
     if rc != 0:
@@ -274,8 +274,23 @@ def ensure_emulator_runtime(log: LogFn) -> Path:
         raise RuntimeError("模拟器安装后仍未找到 emulator.exe")
     if not C.avd_exists():
         create_avd(log)
+    sync_tool_path(log)          # 装完立刻登记，杜绝下次重复下载
     log("ok", f"运行时就绪: {emu}")
     return emu
+
+
+def sync_tool_path(log: LogFn) -> int:
+    """把现有工具目录写进用户 PATH，并登记运行时根目录。"""
+    from . import envpath
+
+    return envpath.sync_tool_path(log)
+
+
+def resolve_runtime(ask=None, log: LogFn | None = None):
+    """交互式确认模拟器位置（没登记 / 旧登记失效 / 未安装时询问用户）。"""
+    from . import envpath
+
+    return envpath.resolve_runtime(ask, log, install_root=C.DEFAULT_SDK_ROOT)
 
 
 def create_avd(log: LogFn) -> None:

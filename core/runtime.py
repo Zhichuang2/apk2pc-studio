@@ -160,13 +160,26 @@ def install(apk: Path, serial: str, log: LogFn, pkg: str = "") -> bool:
     if "Success" in out:
         log("ok", "安装成功")
         return True
-    if pkg and ("INSTALL_FAILED_UPDATE_INCOMPATIBLE" in out or "signatures do not match" in out
-                or "INSTALL_FAILED_ALREADY_EXISTS" in out):
-        log("warn", f"旧版本签名冲突，先卸载 {pkg} 再装")
+    # 覆盖安装被系统拒绝的几类：签名冲突、版本降级、已存在不同签名。
+    # 降级（VERSION_DOWNGRADE）在「用重建包覆盖原版」时很常见，必须卸载后重装。
+    retry_marks = ("INSTALL_FAILED_UPDATE_INCOMPATIBLE", "signatures do not match",
+                   "INSTALL_FAILED_ALREADY_EXISTS", "INSTALL_FAILED_VERSION_DOWNGRADE",
+                   "INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES",
+                   "INSTALL_FAILED_USER_RESTRICTED")
+    if pkg and any(m in out for m in retry_marks):
+        log("warn", f"系统拒绝覆盖安装，先卸载 {pkg} 再装")
         _adb("-s", serial, "uninstall", pkg, timeout=90)
         rc, out = _adb("-s", serial, "install", "-r", "-t", "-g", str(apk), timeout=600)
         log("out", out.strip())
-        return "Success" in out
+        if "Success" in out:
+            log("ok", "重装成功")
+            return True
+    # 没有包名时也允许降级安装（adb -d）
+    if "INSTALL_FAILED_VERSION_DOWNGRADE" in out:
+        rc, out = _adb("-s", serial, "install", "-r", "-d", "-t", "-g", str(apk), timeout=600)
+        log("out", out.strip())
+        if "Success" in out:
+            return True
     log("error", "安装失败")
     return False
 

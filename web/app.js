@@ -61,6 +61,12 @@ function renderEnv(s) {
   S.env = s;
   $("#ver").textContent = `v${s.app.version}${s.app.frozen ? " · exe" : ""}`;
   $("#data-dir").textContent = "数据目录 " + s.data_dir;
+  const od = $("#opt-output-dir");
+  if (od && document.activeElement !== od) {
+    od.value = (s.settings && s.settings.output_dir) || "";
+  }
+  const oh = $("#output-hint");
+  if (oh) oh.textContent = "当前：" + (s.output_dir || "—");
 
   const tools = s.tools || [];
   const okCount = tools.filter((t) => t.ok).length;
@@ -461,6 +467,20 @@ function bind() {
       btn.disabled = false;
       btn.textContent = old;
       refreshDevices();
+    }
+  };
+
+  $("#btn-output-save").onclick = async () => {
+    const btn = $("#btn-output-save");
+    const val = ($("#opt-output-dir").value || "").trim().replace(/^"|"$/g, "");
+    btn.disabled = true;
+    try {
+      const r = await api("/api/settings", { output_dir: val });
+      if (r && r.error) toast("保存失败：" + r.error, "err");
+      else toast(val ? "成品目录已切换" : "已恢复默认目录");
+      await refreshState();
+    } finally {
+      btn.disabled = false;
     }
   };
 

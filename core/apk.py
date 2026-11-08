@@ -99,11 +99,32 @@ def manifest_info(decoded: Path) -> dict:
     return out
 
 
+def manifest_package_fallback(apk: Path) -> str:
+    """aapt2 不可用时，从二进制 AndroidManifest.xml 的字符串池里兜底取包名。
+
+    AXML 的字符串多以 UTF-16LE 存放，直接解出所有点分标识符再挑最像包名的那个；
+    只用于极端场景（工具链没装全），正常路径仍走 aapt2。
+    """
+    try:
+        with zipfile.ZipFile(apk) as z:
+            raw = z.read("AndroidManifest.xml")
+    except Exception:
+        return ""
+    text = raw.decode("utf-16-le", errors="ignore")
+    cands = re.findall(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*){2,}", text)
+    skip = ("android.", "com.google.", "java.", "dalvik.", "org.w3c.", "org.xml.")
+    for c in cands:
+        if not c.startswith(skip) and not c.endswith((".xml", ".dex", ".so", ".png")):
+            return c
+    return ""
+
+
 def badging_info(apk: Path) -> dict:
     """没有解包目录时，用 aapt2 dump badging 兜底。"""
     aapt = C.aapt2_exe()
     out: dict = {"package": "", "label": "", "main_activity": ""}
     if not aapt:
+        out["package"] = manifest_package_fallback(apk)
         return out
     rc, txt = popen_capture([aapt, "dump", "badging", str(apk)], timeout=60)
     if rc != 0:

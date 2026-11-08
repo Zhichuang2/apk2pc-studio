@@ -1,9 +1,9 @@
-"""打包：python build_exe.py [--onefile]
+"""打包：python build_exe.py [--onedir]
 
-默认 onedir：目录形式，启动 0.68 s。
---onefile 用于「单文件分发」；把内置的 apktool.jar 去掉之后，两者启动几乎一致
-（实测 onedir 0.68 s / onefile 0.69 s），区别只在 onefile 每次启动要多解一次临时目录，
-磁盘慢或杀软严格的机器上会略久。
+默认 onefile：产物是**单个 exe**，拷到没装 Python 的电脑上双击即可，
+不会因漏带 _internal 目录而闪退（实测冷启动 0.69 s，与 onedir 持平）。
+--onedir 仍可用（目录形式），此时会额外产出一个 onefile 的 launcher-base.exe
+供「生成独立启动器」使用，保证成品同样是单文件。
 """
 from __future__ import annotations
 
@@ -16,61 +16,66 @@ ROOT = Path(__file__).resolve().parent
 NAME = "APK2PCStudio"
 
 
-def _park(path: Path) -> Path | None:
-    """不删旧产物，改名让位。
-
-    某些环境把删除劫持成「移到回收站」，目录稍大就失败并抛 OSError，
-    连 PyInstaller 自己的清理都会被打断；改名是唯一稳妥的做法。
-    """
+def _park(path: Path) -> None:
+    """不删旧产物，改名让位（某些环境把删除劫持成移入回收站会锁目录）。"""
     if not path.exists():
-        return None
+        return
     for i in range(1, 100):
         target = path.with_name(f"{path.name}.old{i}")
         if not target.exists():
             try:
                 path.rename(target)
-                return target
-            except Exception:
-                return None
-    return None
+                return
+            except OSError:
+                return
 
 
-def main() -> int:
-    onefile = "--onefile" in sys.argv
-    _park(ROOT / "dist")
-    _park(ROOT / "build")
-    _park(ROOT / "build_v2")
-    spec = ROOT / f"{NAME}.spec"
-    if spec.exists():
-        spec.unlink(missing_ok=True)
-
+def _pyinstaller(onefile: bool, name: str, distpath: Path, workpath: Path) -> int:
     args = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm", "--clean",
         "--onefile" if onefile else "--onedir",
         "--console",
-        "--name", NAME,
+        "--name", name,
         "--add-data", f"{ROOT / 'web'};web",
-        # vendor/apktool.jar 不再内置：改为首次运行从 Maven 中央仓取（省 15 MB，启动更快）
+        # apktool.jar 不内置：首次运行从 Maven 中央仓取（省 15 MB，启动更快）
         "--collect-submodules", "core",
         "--exclude-module", "numpy",
         "--exclude-module", "PIL",
         "--exclude-module", "tkinter",
+        "--distpath", str(distpath),
+        "--workpath", str(workpath),
         str(ROOT / "app.py"),
     ]
-    print(">>>", " ".join(args))
-    rc = subprocess.call(args, cwd=str(ROOT))
-    if rc == 0:
-        out = ROOT / "dist" / (f"{NAME}.exe" if onefile else NAME)
-        print(f"\n✔ 打包完成: {out}")
-        if out.exists():
-            if out.is_file():
-                print(f"  体积: {out.stat().st_size/1048576:.1f} MB")
-            else:
-                total = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
-                print(f"  体积: {total/1048576:.1f} MB（目录）")
-                print(f"  可执行: {out / (NAME + '.exe')}")
-    return rc
+    print(">>> PyInstaller", "--onefile" if onefile else "--onedir", name, flush=True)
+    return subprocess.call(args, cwd=str(ROOT))
+
+
+def main() -> int:
+    want_onedir = "--onedir" in sys.argv
+    _park(ROOT / "dist")
+    _park(ROOT / "build")
+    (ROOT / f"{NAME}.spec").unlink(missing_ok=True)
+
+    dist = ROOT / "dist"
+    rc = _pyinstaller(not want_onedir, NAME, dist, ROOT / "build")
+    if rc != 0:
+        return rc
+
+    if want_onedir:
+        # onedir 主程序旁边补一个单文件模板，供生成独立启动器用
+        rc = _pyinstaller(True, "launcher-base", dist, ROOT / "build_launcher")
+        if rc == 0:
+            dst = dist / NAME / "launcher-base.exe"
+            shutil.copy2(dist / "launcher-base.exe", dst)
+            print(f"  launcher-base.exe → {dst}")
+        out = dist / NAME / f"{NAME}.exe"
+    else:
+        out = dist / f"{NAME}.exe"
+
+    if out.exists():
+        print(f"\n✔ 打包完成: {out}  ({out.stat().st_size/1048576:.1f} MB)")
+    return 0
 
 
 if __name__ == "__main__":

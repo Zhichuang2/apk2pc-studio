@@ -184,12 +184,15 @@ class Handler(BaseHTTPRequestHandler):
                 if kind == "gradle":
                     out = pipeline.export_gradle(ws, decoded, java_dir, info)
                 elif kind == "launcher":
-                    src_apk = Path(res.get("apk") or body.get("apk") or "")
+                    # 交付的是「重建签名后的 APK」，不是把原包原样套回去
+                    src_apk = Path(res.get("signed") or res.get("artifact")
+                                   or res.get("apk") or body.get("apk") or "")
                     if not src_apk.exists():
-                        return self._json({"error": "找不到用于打包的 APK"}, 400)
+                        return self._json({"error": "找不到用于打包的 APK，先跑一次重建签名"}, 400)
                     if not info.get("package"):
                         info = apkmod.badging_info(src_apk) or info
-                    out_dir = Path(body.get("target_dir") or (ws / "launcher"))
+                    label = apkmod.sanitize(info.get("label") or src_apk.stem)
+                    out_dir = Path(body.get("target_dir") or (C.output_dir() / label))
                     out = pipeline.make_launcher(src_apk, info, out_dir)
                 else:
                     return self._json({"error": "unknown kind"}, 400)
@@ -221,6 +224,7 @@ class Handler(BaseHTTPRequestHandler):
             for j in (JOBS.get(i) for i in reversed(JOBS.order)) if j
         ][:12]
         snap["workspace"] = str(C.WORKSPACE)
+        snap["output_dir"] = str(C.output_dir())
         snap["launch"] = LAUNCH
         return snap
 

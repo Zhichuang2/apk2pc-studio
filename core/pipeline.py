@@ -388,6 +388,26 @@ def step_sign(job: Job, unsigned: Path, root: Path) -> Path:
     job.result["signed"] = str(signed)
     job.result["out_dir"] = str(root)
     job.log("ok", f"已签名: {signed}")
+
+    # 全流程会产出 unsigned / aligned / signed 三份同尺寸大包（2 GB 级时占 7 GB+）。
+    # 签名成品才是交付物，中间副本立刻清掉，避免每个成品都白占一份磁盘。
+    if not C.settings.get("keep_intermediates"):
+        freed = 0
+        for p in (unsigned, aligned):
+            try:
+                if p and p != signed and p.is_file():
+                    freed += p.stat().st_size
+                    p.unlink()
+            except OSError:
+                pass
+        if freed:
+            job.log("info", f"已清理中间副本，释放 {freed/1048576:.0f} MB（只保留签名成品）")
+        idsig = Path(str(signed) + ".idsig")
+        try:
+            if idsig.is_file():
+                idsig.unlink()
+        except OSError:
+            pass
     job.ok_step("sign", signed.name)
     return signed
 
@@ -477,7 +497,9 @@ def run_build_only(job: Job) -> None:
     job.skip("java", "跳过")
     unsigned = step_build(job, root)
     _check_cancel(job)
-    step_sign(job, unsigned, root)
+    signed = step_sign(job, unsigned, root)
+    info = job.result.get("info") or apkmod.badging_info(Path(job.params["apk"])) or {}
+    publish_artifact(job, signed, info)
 
 
 def run_only(job: Job) -> None:
@@ -505,7 +527,32 @@ def run_full(job: Job) -> None:
     signed = step_sign(job, unsigned, root)
     _check_cancel(job)
     info = job.result.get("info", {})
+    publish_artifact(job, signed, info)
     step_run(job, signed, info)
+
+
+def publish_artifact(job: Job, signed: Path, info: dict) -> Path:
+    """把签名成品发布到用户指定的输出目录（默认程序自身目录下 output\\）。
+
+    工作区只留 src/ 与 java/ 供再次修改重打包；交付物统一放输出目录，
+    这样「程序是辅助、产物才是成果」——换台机器只需要拷这个目录。
+    """
+    label = apkmod.sanitize(info.get("label") or signed.stem)
+    out = C.output_dir() / label
+    out.mkdir(parents=True, exist_ok=True)
+    dest = out / f"{label}-signed.apk"
+    try:
+        if signed.resolve() != dest.resolve():
+            shutil.copy2(signed, dest)
+        job.result["artifact"] = str(dest)
+        job.result["out_dir"] = str(out)
+        C.settings["last_signed"] = str(dest)
+        C.settings["last_workspace"] = str(job.result.get("workspace") or "")
+        C.settings.save()
+        job.log("ok", f"成品已输出到 {dest}")
+    except OSError as e:
+        job.log("warn", f"复制到输出目录失败（成品仍在工作区）: {e}")
+    return dest
 
 
 # ---------------------------------------------------------------- 导出
@@ -601,6 +648,14 @@ def make_launcher(apk_path: Path, info: dict, target_dir: Path) -> Path:
     from . import launcher as lch
 
     target_dir.mkdir(parents=True, exist_ok=True)
+    # 包名 / 启动 Activity 是产物能不能拉起的关键，缺了就地补（aapt2 可用时）
+    if not info.get("package") or not info.get("main_activity"):
+        try:
+            provision.ensure_buildtools(lambda level, text: None)
+        except Exception:  # noqa: BLE001
+            pass
+        extra = apkmod.badging_info(apk_path) or {}
+        info = {**extra, **{k: v for k, v in info.items() if v}}
     name = apkmod.sanitize(info.get("label") or apk_path.stem)
     cfg = {
         "label": info.get("label", name),
@@ -613,19 +668,31 @@ def make_launcher(apk_path: Path, info: dict, target_dir: Path) -> Path:
     }
     if C.is_frozen():
         import sys
+
         exe_path = Path(sys.executable)
-        meipass = Path(getattr(sys, "_MEIPASS", exe_path.parent))
-        if meipass != exe_path.parent:
-            # onedir 打包：exe 依赖同目录的 _internal，必须整包复制，否则双击直接报错
-            bundle = target_dir / name
-            shutil.rmtree(bundle, ignore_errors=True)
-            shutil.copytree(exe_path.parent, bundle)
-            exe = bundle / exe_path.name
-            lch.build_embedded(exe, apk_path, cfg)
-            return exe
-        # onefile：exe 自带运行时，复制单个文件再焊 APK
+        # 产物必须是「单个 exe」：拷到没装 Python 的电脑上也能双击。
+        # 优先用打包时一并产出的瘦启动器模板（onefile，自带运行时、不依赖 _internal）。
+        templates = [
+            C.program_dir() / "launcher-base.exe",
+            exe_path.parent / "launcher-base.exe",
+        ]
+        base = next((p for p in templates if p.is_file()), None)
+
+        if base is None:
+            # 当前进程本身就是 onefile（同目录没有 _internal）→ 自身可作模板
+            if not (exe_path.parent / "_internal").is_dir():
+                base = exe_path
+            else:
+                # onedir 兜底：整包复制，保证产物一定可用（体积略大）
+                bundle = target_dir / name
+                shutil.rmtree(bundle, ignore_errors=True)
+                shutil.copytree(exe_path.parent, bundle)
+                exe = bundle / exe_path.name
+                lch.build_embedded(exe, apk_path, cfg)
+                return exe
+
         exe = target_dir / f"{name}.exe"
-        shutil.copy2(exe_path, exe)
+        shutil.copy2(base, exe)
         lch.build_embedded(exe, apk_path, cfg)
         return exe
 

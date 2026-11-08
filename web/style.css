@@ -88,6 +88,10 @@ body{
 .input:focus{outline:none;border-color:#2b9e80}
 .check{display:flex;align-items:center;gap:6px;color:var(--fg2);cursor:pointer;margin-top:8px}
 .check input{accent-color:#1c7f66}
+.outfield{margin-top:10px;display:flex;flex-direction:column;gap:5px}
+.outfield .lbl{font-size:11px;color:var(--fg2)}
+.outfield .input{width:100%;font-size:11px;padding:5px 7px}
+.outfield .hint{font-size:10px;color:var(--fg3);word-break:break-all}
 
 /* ---------------- 拖放区 ---------------- */
 .dropzone{

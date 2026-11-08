@@ -85,6 +85,14 @@ window.addEventListener("unhandledrejection", function (ev) {
         <label class="check sm" title="部分机器上 -fullscreen 会让模拟器秒退，默认关闭">
           <input type="checkbox" id="opt-fullscreen"> 模拟器全屏（部分机器会启动失败）
         </label>
+        <div class="outfield" title="成品默认放在程序目录下的 output\\">
+          <span class="lbl">成品输出目录</span>
+          <div class="row gap6">
+            <input class="input" type="text" id="opt-output-dir" placeholder="留空 = 程序目录下的 output\">
+            <button class="btn ghost xs" id="btn-output-save">应用</button>
+          </div>
+          <span class="hint" id="output-hint"></span>
+        </div>
       </section>
 
       <section class="card">

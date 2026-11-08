@@ -47,11 +47,46 @@ def data_dir() -> Path:
 DATA_DIR = data_dir()
 TOOLS_DIR = DATA_DIR / "tools"
 WORKSPACE = DATA_DIR / "workspace"
-SDK_ROOT = DATA_DIR / "android-sdk"
+DEFAULT_SDK_ROOT = DATA_DIR / "android-sdk"
 KEYSTORE = DATA_DIR / "apk2pc-debug.keystore"
 SETTINGS_FILE = DATA_DIR / "settings.json"
-for _d in (TOOLS_DIR, WORKSPACE, SDK_ROOT):
+for _d in (TOOLS_DIR, WORKSPACE, DEFAULT_SDK_ROOT):
     _d.mkdir(parents=True, exist_ok=True)
+
+
+def sdk_root() -> Path:
+    """安卓运行时根目录。优先用环境变量里登记的位置（用户指定 / 已复用）。"""
+    from . import envpath
+
+    raw = os.environ.get("APK2PC_RUNTIME") or envpath.get_var("APK2PC_RUNTIME")
+    p = Path(os.path.expandvars(raw)).resolve() if raw.strip() else DEFAULT_SDK_ROOT
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        p = DEFAULT_SDK_ROOT
+    return p
+
+
+SDK_ROOT = DEFAULT_SDK_ROOT  # 兼容旧引用；新代码一律用 sdk_root()
+
+
+def program_dir() -> Path:
+    """程序自身目录（冻结态=exe 所在目录；源码态=项目根目录）。"""
+    return Path(sys.executable).resolve().parent if is_frozen() else \
+        Path(__file__).resolve().parent.parent
+
+
+def output_dir() -> Path:
+    """成品输出目录，默认程序自身目录下的 output\\，可在界面 / 命令行切换。"""
+    raw = (settings.get("output_dir") or "").strip() if "settings" in globals() else ""
+    if not raw:
+        raw = os.environ.get("APK2PC_OUTPUT", "")
+    p = Path(os.path.expandvars(raw)).resolve() if raw.strip() else program_dir() / "output"
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        p = program_dir()
+    return p
 
 KEYSTORE_PASS = "android"
 KEYSTORE_ALIAS = "apk2pc"
@@ -89,6 +124,9 @@ DEFAULTS = {
     "quick_boot": True,
     "jadx_threads": 4,
     "last_apk": "",
+    "last_signed": "",
+    "last_workspace": "",
+    "output_dir": "",          # 空 = 程序自身目录下 output\
     "auto_start_emulator": True,
 }
 
@@ -353,8 +391,13 @@ def aapt2_exe() -> Path | None:
 
 
 def adb_exe() -> Path | None:
+    from . import envpath
+
+    f = envpath.find("adb")           # 先查已注册 PATH（共享运行时）
+    if f:
+        return f
     cands = [
-        SDK_ROOT / "platform-tools" / "adb.exe",
+        sdk_root() / "platform-tools" / "adb.exe",
         Path(r"D:\app\platform-tools-latest-windows\platform-tools\adb.exe"),
         Path(r"D:\app\APK一键安装工具_完整包\adb.exe"),
         Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe",
@@ -367,23 +410,40 @@ def adb_exe() -> Path | None:
 
 
 def emulator_exe() -> Path | None:
+    from . import envpath
+
+    f = envpath.find("emulator")
+    if f:
+        return f
     return _first_existing(
-        SDK_ROOT / "emulator" / "emulator.exe",
+        sdk_root() / "emulator" / "emulator.exe",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk" / "emulator" / "emulator.exe",
     )
 
 
 def sdkmanager_exe() -> Path | None:
+    from . import envpath
+
+    f = envpath.find("sdkmanager")
+    if f:
+        return f
+    r = sdk_root()
     return _first_existing(
-        SDK_ROOT / "cmdline-tools" / "latest" / "bin" / "sdkmanager.bat",
-        SDK_ROOT / "cmdline-tools" / "bin" / "sdkmanager.bat",
+        r / "cmdline-tools" / "latest" / "bin" / "sdkmanager.bat",
+        r / "cmdline-tools" / "bin" / "sdkmanager.bat",
     )
 
 
 def avdmanager_exe() -> Path | None:
+    from . import envpath
+
+    f = envpath.find("avdmanager")
+    if f:
+        return f
+    r = sdk_root()
     return _first_existing(
-        SDK_ROOT / "cmdline-tools" / "latest" / "bin" / "avdmanager.bat",
-        SDK_ROOT / "cmdline-tools" / "bin" / "avdmanager.bat",
+        r / "cmdline-tools" / "latest" / "bin" / "avdmanager.bat",
+        r / "cmdline-tools" / "bin" / "avdmanager.bat",
     )
 
 
@@ -393,7 +453,7 @@ def system_image_dir() -> Path | None:
     if len(parts) != 4:
         return None
     _, tag, abi, arch = parts
-    p = SDK_ROOT / "system-images" / tag / abi / arch
+    p = sdk_root() / "system-images" / tag / abi / arch
     return p if p.exists() else None
 
 
