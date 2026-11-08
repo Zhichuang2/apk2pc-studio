@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT.parent / "_release"
 WORK = ROOT.parent / "_build_release"
-VER = "1.1.0"
+VER = "1.1.1"
 BASE = f"APK2PCStudio-{VER}"
 
 PY314 = Path(r"C:\Users\ZC\AppData\Local\Programs\Python\Python314\python.exe")
