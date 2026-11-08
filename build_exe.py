@@ -1,7 +1,9 @@
 """打包：python build_exe.py [--onefile]
 
-默认 onedir：启动 1s 内（onefile 每次要把整个包解到临时目录，实测 2.8s）。
---onefile 仍可用（想要「单文件分发」时），但启动会慢 2 秒左右。
+默认 onedir：目录形式，启动 0.68 s。
+--onefile 用于「单文件分发」；把内置的 apktool.jar 去掉之后，两者启动几乎一致
+（实测 onedir 0.68 s / onefile 0.69 s），区别只在 onefile 每次启动要多解一次临时目录，
+磁盘慢或杀软严格的机器上会略久。
 """
 from __future__ import annotations
 

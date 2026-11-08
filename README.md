@@ -148,11 +148,15 @@ exe 本身仍然是合法 PE，双击照常启动。解包逻辑会先读尾部 
 
 ### 方式一：直接用打包好的 EXE（推荐）
 
-```
-dist\APK2PCStudio\APK2PCStudio.exe
-```
+从 [Releases](https://github.com/Zhichuang2/apk2pc-studio/releases/latest) 下载，二选一：
 
-双击即开，浏览器自动打开界面。不需要 Python、不需要 pip install —— 程序只用标准库。
+| 文件 | 用法 | 冷启动 |
+|---|---|---|
+| `APK2PCStudio-1.0.0-win64.zip` | 解压到任意目录，双击里面的 `APK2PCStudio.exe` | 0.68 s |
+| `APK2PCStudio-1.0.0-onefile.exe` | 单文件，双击就跑，不用解压 | 0.69 s |
+
+双击即开，浏览器自动打开界面。**不需要 Python、不需要 pip install** —— 程序只用标准库。
+仓库里也带了本地构建产物：`dist\APK2PCStudio\APK2PCStudio.exe`。
 
 ### 方式二：从源码运行
 
@@ -167,19 +171,23 @@ python app.py
 ### 方式三：自己打包
 
 ```bat
-打包EXE.bat              :: onedir，快
-打包EXE.bat --onefile    :: 单文件分发，启动慢约 2 秒
+打包EXE.bat              :: onedir（目录形式，启动最快）
+打包EXE.bat --onefile    :: 单文件分发（一个文件，方便发给别人）
 ```
 
 等价于 `python build_exe.py [--onefile]`。产物对比：
 
-| 形态 | 产物 | 冷启动 | 适用 |
+| 形态 | 产物 | 冷启动（3 次实测） | 适用 |
 |---|---|---|---|
-| onedir（默认） | `dist/APK2PCStudio/`（exe + `_internal/`） | **0.68 s** | 自己用，启动快 |
-| onefile | `dist/APK2PCStudio.exe`（单文件，约 9.4 MB） | 2.80 s | 发给别人，单个文件 |
+| onedir（默认） | `dist/APK2PCStudio/`（exe + `_internal/`） | **0.68 s** | 自己用，进程干净 |
+| onefile | `dist/APK2PCStudio.exe`（单文件，约 9.4 MB） | **0.69 s**（0.66–0.71） | 发给别人，单个文件 |
 
-> onefile 每次启动都要把整个包解压到临时目录再被杀软扫一遍，这 2 秒是买来的。
-> 另外：onedir 导出的「启动器」是把整个目录复制过去；想要「一个文件里塞着 APK」，请用 `--onefile` 构建后再导出。
+> 两者启动已经基本没差别 —— 早期 onefile 慢到 2.8 s，是因为那时把 15 MB 的 apktool.jar 打进了包里、
+> 每次启动都要解压一遍。现在 apktool 改为首次运行按需下载，这个代价就消失了。
+> 唯一的区别：onefile 每次仍要解压到临时目录，磁盘慢或杀软严格的机器上会比 onedir 略久。
+>
+> 另注：onedir 版本导出「独立启动器」时会把整个目录复制过去（exe 依赖旁边的 `_internal/`）；
+> 想要「一个文件里塞着 APK」，请用 `--onefile` 构建后再导出。
 
 ### 首次装配工具链
 
@@ -411,7 +419,7 @@ disk.dataPartition.size=8G
 | 自签名包装进模拟器 | ✔ Success（并自动处理签名冲突） |
 | **2.47 GB 真实游戏包重建 + 自签名** | ✔ 装机 Success → 进入游戏主界面 |
 | 单文件启动器（APK 内嵌 exe） | ✔ 解出的载荷 SHA-256 与原 APK 一致 |
-| 程序冷启动 | ✔ onedir 0.68 s（onefile 2.80 s） |
+| 程序冷启动 | ✔ onedir 0.68 s / onefile 0.69 s（三次 0.66–0.71 s） |
 
 **尚未验证**：ARM-only 应用在 x86_64 镜像上的转译表现（取决于镜像自带 ARM 转译层）；Mac/Linux 未适配。
 
