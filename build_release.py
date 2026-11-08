@@ -1,14 +1,14 @@
-"""发布构建：一次产出 v1.2.0 的全部资产。
+"""发布构建：一次产出当前版本的全部资产（版本号由 VER 决定）。
 
     python build_release.py
 
-产物（在项目上级目录的 _release/）：
-    APK2PCStudio-1.2.0-CLI.exe         命令行向导版
-    APK2PCStudio-1.2.0-Web.exe         浏览器界面版
-    APK2PCStudio-1.2.0-GUI.exe         图形窗口版（tkinter）
-    APK2PCStudio-1.2.0-AllInOne.zip    三合一（3 个 exe + 界面选择器 + 说明）
-    APK2PCStudio-1.2.0-Source.zip      源码
-    APK2PCStudio-1.2.0-Source.tar.gz   源码
+产物（在项目上级目录的 _release/，<VER> 为版本号）：
+    APK2PCStudio-<VER>-CLI.exe         命令行向导版
+    APK2PCStudio-<VER>-Web.exe         浏览器界面版
+    APK2PCStudio-<VER>-GUI.exe         图形窗口版（tkinter）
+    APK2PCStudio-<VER>-AllInOne.zip    三合一（3 个 exe + 界面选择器 + 说明）
+    APK2PCStudio-<VER>-Source.zip      源码
+    APK2PCStudio-<VER>-Source.tar.gz   源码
 
  CLI / Web / 选择器是**同一个二进制**按文件名分派，只打一次包；
  GUI 需要 tkinter，用系统 Python 3.14 单独打（PyInstaller >= 6.22.3）。
@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT.parent / "_release"
 WORK = ROOT.parent / "_build_release"
-VER = "1.2.0"
+VER = "1.1.0"
 BASE = f"APK2PCStudio-{VER}"
 
 PY314 = Path(r"C:\Users\ZC\AppData\Local\Programs\Python\Python314\python.exe")

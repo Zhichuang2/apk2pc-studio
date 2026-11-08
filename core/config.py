@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 APP_TITLE = "APK2PC Studio"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------- 路径
 
