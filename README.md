@@ -1,437 +1,368 @@
 # APK2PC Studio
 
-**把一个 APK 从「装不进去的二进制」变成「能在 Windows 上跑起来、还能改」的完整工程。**
+> 把 APK **解包 → 还原 Java 源码 → 重建签名 → 装进电脑里的安卓模拟器跑起来**，一条流水线全自动。
+> 程序只是辅助，**输出的成品才是重点**：改过的包能重新打包、能装、能生成双击即用的单文件启动器。
 
-一条流水线做完全部脏活：apktool 解包 → jadx 反编译出可读 Java → 改完重建 → 对齐签名 → 装进电脑里的 Android 模拟器并拉起。
-界面是本地网页（零第三方依赖），可打包成单个 EXE 双击即用。
+![在 Windows 里跑起来的重建包](docs/重建包运行.png)
 
-`Windows 10/11` · `Python 3.9+（仅源码运行需要）` · `JDK 11+` · 冷启动 `0.68 s`
+**三种界面，随你挑**（同一个核心，功能完全一致）：
 
+| 界面 | 长什么样 | 适合谁 |
+|---|---|---|
+| **命令行向导** | 黑框菜单，输入数字 / 拖文件 | 默认，最省资源，服务器也能用 |
+| **浏览器界面** | 自动打开本地网页，能看进度条和日志 | 想看清每一步 |
+| **图形窗口** | 像普通软件一样的窗口，能点按钮 | 不习惯命令行的人 |
+
+> 先说清边界：**APK 不能编译成原生 Windows EXE**。它是 Dalvik/ART 字节码 + Android 框架，
+> 离开 Android 运行时就跑不了。本工具的做法是「重建签名后的 APK + 自动托管的安卓模拟器 +
+> 单文件启动器」，让你在电脑上双击就能用，而不是假装把它变成了 PE 程序。
 
 ---
 
 ## 目录
 
-- [它解决什么问题](#它解决什么问题)
-- [特性](#特性)
+- [下载哪个](#下载哪个)
+- [三分钟上手](#三分钟上手)
+- [它到底做什么](#它到底做什么)
 - [工作原理](#工作原理)
-- [安装](#安装)
+- [安装与环境](#安装与环境)
 - [使用](#使用)
 - [配置](#配置)
-- [产物与目录结构](#产物与目录结构)
+- [产物与目录](#产物与目录)
 - [常见问题](#常见问题)
-- [兼容性与实测](#兼容性与实测)
-- [合规声明](#合规声明)
+- [从源码构建](#从源码构建)
+- [合规](#合规)
 
 ---
 
-## 它解决什么问题
+## 下载哪个
 
-逆向一个 APK，命令通常是这样的七零八落：
+去 [Releases](https://github.com/Zhichuang2/apk2pc-studio/releases) 下 **v1.2.0**，共 6 个资产：
 
-```bat
-apktool d app.apk -o src
-jadx -d java --no-res app.apk
-apktool b src -o unsigned.apk
-zipalign -f 4 unsigned.apk aligned.apk
-apksigner sign --ks my.keystore --out signed.apk aligned.apk
-adb install -r signed.apk
-adb shell am start -n pkg/.MainActivity
+| 资产 | 内容 | 谁该下 |
+|---|---|---|
+| `...-AllInOne.zip` | **三合一**：3 个专用 exe + 界面选择器 + 说明 | 想都要 / 第一次用 |
+| `...-CLI.exe` | 命令行向导版（最轻量） | 只要黑框菜单 |
+| `...-Web.exe` | 浏览器界面版 | 只要网页界面 |
+| `...-GUI.exe` | 图形窗口版（tkinter） | 只要能点按钮的窗口 |
+| `...-Source.zip` | 源码 | 想看代码 / 二开 |
+| `...-Source.tar.gz` | 源码 | Linux / macOS 下查看 |
+
+**都不需要装 Python**，双击即用。三合一包里的 `APK2PCStudio.exe` 是界面选择器，
+双击后按 `1`/`2`/`3` 选一种；之后想固定用某个界面，直接双击对应的专用 exe。
+
+单文件 exe 约 10 MB，但**安卓运行时约 2 GB 是首次运行时才下载**，而且所有版本、
+所有生成的启动器**共享同一份**（见[工作原理](#工作原理)）。
+
+---
+
+## 三分钟上手
+
+1. 双击 exe（三合一包里选 `1` 或直接回车）。
+2. 第一次会问「安卓模拟器装在哪」——**直接回车用默认位置**即可，之后会写入 PATH，
+   下次不再问；也可以把已有 SDK 目录拖进来复用。
+3. 把 `.apk` 拖进窗口 / 粘贴完整路径 → 一键全流程。
+
+跑完你会得到：解包目录、Java 源码、一份重建签名的可安装 APK，以及模拟器里已经打开的应用。
+
+> 想改东西？解包出的 `src\` 里可以改 smali / 资源，改完选「重新打包签名」就出新包。
+> 这就是「先拆出来是为了方便重新打包」，不是把原包原样套回去。
+
+---
+
+## 它到底做什么
+
+原本要手敲、且每一步都有坑的一串命令：
+
+```
+java -jar apktool.jar d app.apk        # 资源 / smali 解包
+jadx app.apk                           # dex → 可读 Java（要配依赖树）
+java -jar apktool.jar b src            # 重建，参数版本差异大
+zipalign -p 4 ...                      # 4 字节对齐
+apksigner sign --ks ...                # v1/v2/v3 签名，还要自己造密钥
+adb install -r -t -g ...               # 签名冲突 / 版本降级 / 空间不足都要手工处理
+emulator -avd ... && adb shell am start -n <包名>/<启动Activity>
 ```
 
-每一步都有自己的坑：apktool 3.x 删掉了 `--use-aapt2`、jadx 少一个 `logback-core` 就 **rc=1 且零输出**、`JAVA_HOME` 指向 javapath 壳目录会让 apksigner 全挂、Android 11+ 不签 v2 根本装不上、签名冲突要先卸旧包、2 GB 的包还要先把 AVD 数据分区调大……
+本工具把这些串成**六步流水线**，并且自动处理：工具链下载、包名与启动 Activity 识别、
+签名冲突自动卸载重装、版本降级、模拟器数据分区不足、快照快速开机、中间副本清理。
 
-APK2PC Studio 把这些坑**固定在代码里**，你只面对一个界面和一条进度条。
+**能力一览**
 
-### 先说清楚：APK 不能「编译」成原生 EXE
-
-APK 是 dex 字节码 + Android 框架 + JNI 原生库，Windows 上没有任何编译器能把它们翻译成原生 EXE —— 这不是工具链选型问题，是运行时模型根本不同。
-
-市面上所有「APK 转 EXE」产品，本质都是**把 Android 运行时塞进电脑**，EXE 只是壳。本工具用的是同一条路，但把壳做薄：
-
-- **容器**：自动装配一台 Android 14 x86_64 模拟器（`google_apis`），APK 真的跑在 Windows 里；
-- **壳**：可选的「单文件启动器」—— APK 直接内嵌进 exe 尾部，双击 → 开机 → 装包 → 拉起，旁边不用再放 apk。
-
-想要原生性能只有两条路（本工具不代做）：Android-x86 / BlissOS 装物理机或虚拟机；或在有源码的前提下用 Flutter / React Native / Qt 重写。
-
----
-
-## 特性
-
-| 能力 | 说明 |
+| | |
 |---|---|
-| **全流程一键跑** | 六步自动串联，日志实时滚动，随时可取消（会真的杀掉子进程，不留僵尸） |
-| **Java 源码还原** | jadx 优先；jadx 装不上时自动回落到 androguard（内置 DAD 反编译器） |
-| **工具链自装配** | apktool / jadx / build-tools / 模拟器都不入库，缺失时点一下自动下载 |
-| **国内可用的源** | apktool、jadx 走 **Maven 中央仓**（GitHub 直连在国内常年不通，这里不用赌） |
-| **自签名可安装** | zipalign + apksigner，同时开 v1/v2/v3；自动生成并复用调试密钥 |
-| **签名冲突自愈** | 遇到 `UPDATE_INCOMPATIBLE` 自动卸载旧包再装，不用你手动 `pm uninstall` |
-| **单文件启动器** | APK 内嵌 exe 尾部，双击即用；产物是**一个文件** |
-| **快照快速开机** | 第二次起走快照，模拟器开机从 90 s 级降到 10 s 级；快照坏了自动冷启重建 |
-| **可导出 Android Studio 工程** | 生成 AGP 8 骨架（模块 `:app`、`namespace`、`compileSdk 34`），把 smali/res/assets/jniLibs 摆到正确位置 |
-| **局部操作** | 只解包、只反编译、只重建签名、只运行 —— 不用每次跑完整条链 |
-| **零第三方 Python 依赖** | 只用标准库；界面是一个本地 HTTP 服务 + 原生 HTML/JS/CSS |
+| 解包 | apktool 3.0.3，资源 + smali，自动识别包名 / 启动 Activity / 版本 |
+| Java | jadx 1.5.1（Maven 中央仓解析依赖树，不依赖 GitHub）；装不上自动回落 androguard |
+| 重建 | apktool + aapt2；`src\` 改过之后可反复重打包 |
+| 签名 | zipalign 4 字节对齐 + apksigner v1/v2/v3，自签后自动验签 |
+| 运行 | 自动装配 Android 模拟器（WHPX）、快照开机、adb 装机并拉起 |
+| 启动器 | 把**重建签名后的 APK** 内嵌进 exe 尾部，双击即开机装包拉起 |
+| 运行时共享 | 先查 PATH / 环境变量，找不到才询问；失效旧记录自动清除；不重复下载 |
+| 产物 | 只保留 1 份签名成品，中间副本自动删；输出目录可切换 |
+| 界面 | 命令行 / 浏览器 / 图形窗口，随时可取消（真杀子进程） |
+| 依赖 | **零第三方 Python 库**，纯标准库；界面是本地网页 |
 
 ---
 
 ## 工作原理
 
-### 流水线
+### 六步流水线
 
 ```
-                 ┌──────────────────────────────────────────────────┐
-   你的 APK ───► │ ①  准备     建工作区、解析 manifest/包名/ABI/壳  │
-                 │ ②  解包     apktool d  →  res/ + smali/ + assets │
-                 │ ③  Java     jadx -d    →  可读 .java（失败回落） │
-                 │ ④  重建     apktool b  →  unsigned.apk (aapt2)   │
-                 │ ⑤  签名     zipalign → apksigner v1/v2/v3        │
-                 │ ⑥  运行     emulator + adb install + am start    │
-                 └──────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-                        电脑屏幕上真的出现那个 App
+ APK ──① 解包──> src/ (smali + res + AndroidManifest.xml)
+      ──② Java──> java/  (jadx / androguard)
+      ──③ 重建──> unsigned.apk      ← src/ 可改完再来
+      ──④ 签名──> signed.apk  (zipalign + v1/v2/v3)
+      ──⑤ 装机──> 模拟器
+      ──⑥ 拉起──> 应用主界面
+                    └─> 成品输出目录 output/（可切换）
 ```
 
-每一步都有独立的成功/跳过/失败状态，失败会带上可读原因（不是甩一坨 stderr）。
-第 ③ 步是**非阻塞**的：加固包反编译不出来，流程照样能走到 ④⑤⑥ —— 因为重建只依赖 ②。
+每一步都是独立任务，可以单独执行（只拆包 / 只出 Java / 重新打包 / 直接运行）。
 
-### 为什么签名这一步不能省
+### 为什么必须重新签名
 
-Android 7 起要求 v2 签名（整个 APK 的哈希树），11 起对 v2 的校验更严。apktool 重建出来的包**签名必然失效**（内容变了），不重签连安装都过不去。所以本工具固定做三件事：
+apktool 重建出来的包没有签名；Android 7+ 的 v2 签名要求 zip 条目按 4 字节对齐，
+顺序错了会直接装不上。所以流程里固定是 `zipalign` → `apksigner`，并用自生成的
+PKCS12 密钥库（RSA 2048 / 10000 天 / 别名 `apk2pc`）。**因此覆盖安装原版会签名冲突**，
+程序检测到后会先卸载旧包再装。
 
-1. `zipalign -f 4` —— 4 字节对齐，否则 `INSTALL_PARSE_FAILED_NOT_ALIGNED`；
-2. `apksigner sign --v1 --v2 --v3` —— 三套签名全开；
-3. `apksigner verify --print-certs` —— 签完自己验一遍，失败就当场报。
-
-### 单文件启动器的内嵌格式
-
-APK 被**追加**在 exe 末尾，前面是可执行体，读取时从尾部定位：
+### 单文件启动器
 
 ```
-[ ────── 原始 exe ────── ][ ──── APK ──── ][ JSON 配置 ][ json 长度 ][ MAGIC ]
-                                                                 ↑ 从后往前找
+[ 主程序 exe ][ 重建签名后的 APK ][ JSON 配置 ][ 长度 ][ MAGIC ]
 ```
 
-好处是：写出时只做 `copy exe` + `append`，改配置时只重写尾部几百字节（2 GB 的 exe 不用重新复制一遍），
-exe 本身仍然是合法 PE，双击照常启动。解包逻辑会先读尾部 MAGIC，读不到就当普通模式启动 —— 所以同一个 exe 既能当工具，也能当某个 App 的启动器。
+启动时从尾部读出配置与 APK，解到数据目录，然后「检查共享运行时 → 装机 → 拉起」。
+它**不启 HTTP 服务、不装 apktool/jadx/build-tools**，只负责跑这一个应用，所以很轻。
+内嵌的是重建签名后的包，不是原包。
+
+### 运行时只下载一次
+
+参考 APK2EXE 的思路，但把「共享」做全了：
+
+1. 每次运行先查用户 PATH、`APK2PC_RUNTIME`、`APK2PC_TOOLPATHS`；
+2. 命中就直接复用，**不下载、不询问**；
+3. 旧记录指向的目录已不存在 → 自动删掉这条记录，重新询问位置；
+4. 还没装 → 询问装在哪，确认后写入用户级环境变量；
+5. 自定义目录（名字里不带项目名）也能正确登记复用，重复调用幂等。
 
 ### 技术栈
 
-| 层 | 实现 |
+| 层 | 用到 |
 |---|---|
-| 界面 | 原生 HTML/CSS/JS，由本地 `http.server` 提供；无框架、无构建步骤 |
-| 后端 | Python 标准库（`http.server` / `subprocess` / `threading` / `urllib`） |
-| 任务模型 | 内存中的 Job 队列，日志带游标增量拉取（前端只取新增部分，不刷全量） |
-| 外部工具 | apktool 3.0.3 · jadx 1.5.1 · build-tools 34.0.0 · Android Emulator + android-34 镜像 |
-| 打包 | PyInstaller（onedir 默认 / onefile 可选） |
+| 后端 | Python 3.10+ 标准库（`http.server` / `subprocess` / `threading`） |
+| 界面 | 命令行向导、本地 Web（原生 HTML/CSS/JS，零依赖）、tkinter 桌面窗口 |
+| 打包 | PyInstaller（`--onefile`；GUI 版用带 tkinter 的完整 Python） |
+| 外部工具 | apktool / jadx / androguard / build-tools(34) / platform-tools / emulator |
 
 ---
 
-## 安装
+## 安装与环境
 
-### 环境要求
+**直接下 exe 就不用装 Python**。若要跑源码，需要 Python 3.10+（GUI 版还需 tkinter）。
 
-| 项 | 要求 | 说明 |
-|---|---|---|
-| 系统 | Windows 10 / 11 x64 | 依赖 WHPX 硬件虚拟化跑模拟器 |
-| JDK | **11 或更高**（实测 JDK 21） | apktool 3.x 强制要求；`java`、`keytool` 需在 PATH |
-| Python | 3.9+ | **仅源码运行 / 自行打包时需要**，直接用 EXE 不需要 |
-| 磁盘 | ≥ 15 GB 空闲（C 盘） | 模拟器镜像 + 系统镜像约 2 GB，2 GB 级 APK 的解包产物更大 |
-| 虚拟化 | BIOS 开启 VT-x/AMD-V，并启用「Windows 虚拟机监控程序平台」 | 否则模拟器起不来 |
+| 要求 | 说明 |
+|---|---|
+| 系统 | Windows 10 / 11 x64 |
+| JDK | **11+**（apktool 3.x / apksigner 强制要求） |
+| 虚拟化 | BIOS 开 VT-x/AMD-V，并在「启用或关闭 Windows 功能」勾选 **Windows 虚拟机监控程序平台 (WHPX)** |
+| 磁盘 | ≥ 15 GB 空闲（模拟器镜像约 2 GB；大包重建时还需要几倍临时空间） |
+| 网络 | 首次运行需联网拉工具链（Maven 中央仓 + dl.google.com，国内可达） |
 
-> 磁盘提示：AVD 镜像和解包产物都很大。C 盘吃紧时建议把成品和中间产物放别的盘；`disk.dataPartition.size` 默认 8G，装 2 GB+ 的包刚好够。
-
-### 方式一：直接用打包好的 EXE（推荐）
-
-从 [Releases](https://github.com/Zhichuang2/apk2pc-studio/releases/latest) 下载，二选一：
-
-| 文件 | 用法 | 冷启动 |
-|---|---|---|
-| `APK2PCStudio-1.0.0-win64.zip` | 解压到任意目录，双击里面的 `APK2PCStudio.exe` | 0.68 s |
-| `APK2PCStudio-1.0.0-onefile.exe` | 单文件，双击就跑，不用解压 | 0.69 s |
-
-双击即开，浏览器自动打开界面。**不需要 Python、不需要 pip install** —— 程序只用标准库。
-仓库里也带了本地构建产物：`dist\APK2PCStudio\APK2PCStudio.exe`。
-
-### 方式二：从源码运行
-
-```bat
-git clone https://github.com/Zhichuang2/apk2pc-studio.git
-cd apk2pc-studio
-python app.py
-```
-
-浏览器会自动打开 `http://127.0.0.1:<随机端口>/`。
-
-### 方式三：自己打包
-
-```bat
-打包EXE.bat              :: onedir（目录形式，启动最快）
-打包EXE.bat --onefile    :: 单文件分发（一个文件，方便发给别人）
-```
-
-等价于 `python build_exe.py [--onefile]`。产物对比：
-
-| 形态 | 产物 | 冷启动（3 次实测） | 适用 |
-|---|---|---|---|
-| onedir（默认） | `dist/APK2PCStudio/`（exe + `_internal/`） | **0.68 s** | 自己用，进程干净 |
-| onefile | `dist/APK2PCStudio.exe`（单文件，约 9.4 MB） | **0.69 s**（0.66–0.71） | 发给别人，单个文件 |
-
-> 两者启动已经基本没差别 —— 早期 onefile 慢到 2.8 s，是因为那时把 15 MB 的 apktool.jar 打进了包里、
-> 每次启动都要解压一遍。现在 apktool 改为首次运行按需下载，这个代价就消失了。
-> 唯一的区别：onefile 每次仍要解压到临时目录，磁盘慢或杀软严格的机器上会比 onedir 略久。
->
-> 另注：onedir 版本导出「独立启动器」时会把整个目录复制过去（exe 依赖旁边的 `_internal/`）；
-> 想要「一个文件里塞着 APK」，请用 `--onefile` 构建后再导出。
-
-### 首次装配工具链
-
-程序**不带**任何第三方二进制，第一次用会显示缺项，点「装配」按需下载到 `%LOCALAPPDATA%\APK2PCStudio\tools\`：
-
-| 组件 | 体积 | 来源 | 用途 |
-|---|---|---|---|
-| `apktool.jar` | ~23 MB | Maven 中央仓 | 解包 / 重建 |
-| `jadx` | ~40 MB | Maven 中央仓（依赖树）+ 镜像兜底 | Java 反编译 |
-| `build-tools 34.0.0` | ~58 MB | `dl.google.com` | zipalign / apksigner / aapt2 |
-| 模拟器 + android-34 镜像 | ~1.5–2 GB | `dl.google.com` | 在电脑上运行 APK |
-
-命令行也可一次装完（适合 CI 或提前准备）：
-
-```bat
-APK2PCStudio.exe --headless-install
-```
+首次装配会下载：apktool(≈23 MB) → jadx 依赖树(≈30 MB) → build-tools(≈60 MB)
+→ platform-tools + emulator + 系统镜像(≈2 GB)。**一次性**，位置写入 PATH 后全局共享。
 
 ---
 
 ## 使用
 
-### 界面四步
+### 三种界面
 
-1. **目标 APK** —— 点「浏览…」弹系统文件对话框，或直接粘贴路径回车。
-   「解析」先读包名 / dex 数量 / ABI，并**提示是否加固**（找不到 `classes*.dex` 就是典型壳特征）。
-2. **工具链** —— 7 项状态一览，缺哪个点哪个旁边的「装配」。
-3. **一键全流程** —— 六步跑完；可中途取消。
-4. **产物** —— 也可以只做局部：
+| 界面 | 怎么进 |
+|---|---|
+| 命令行向导 | 双击 `...-CLI.exe`，或三合一选择器按 `1` |
+| 浏览器界面 | 双击 `...-Web.exe`（自动开网页），或任意 exe 加 `--web` |
+| 图形窗口 | 双击 `...-GUI.exe`，或三合一选择器按 `3` |
 
-| 按钮 | 执行步骤 | 典型用途 |
-|---|---|---|
-| 一键全流程 | ①→⑥ | 我要它跑起来 |
-| 仅解包 + Java | ①②③ | 我只想看代码 |
-| 仅 Java | ①③ | 已经有解包结果，只补 Java |
-| 重建签名 | ④⑤ | 我改过 smali/res，要出新包 |
-| 直接运行 | ⑥ | 包是好的，只想装进模拟器 |
+也能用环境变量强制指定：`APK2PC_MODE=cli|web|gui|select`。
 
-快捷键：`Ctrl+Enter` 跑全流程，`Esc` 取消。
+### 局部操作
 
-### 命令行
+| 想做的事 | 选哪个 |
+|---|---|
+| 一路跑完（拆包→源码→重建→签名→装机→打开） | 一键跑起来 |
+| 只想看 / 改代码 | 只拆包 + Java |
+| 改完 `src\` 出新包 | 重新打包签名 |
+| 只检查/补装工具，不跑模拟器 | 环境检查 |
+| 把成品做成双击即用的单文件 exe | 生成单文件启动器 |
+| 切换成品输出目录 | 输出位置（命令行菜单 6 / 图形界面第 2 步） |
+| 删中间副本腾磁盘 | 清理无用数据 |
+
+### 命令行参数（进阶）
 
 ```bat
-APK2PCStudio.exe                       :: 打开界面
-APK2PCStudio.exe --port 8760           :: 固定端口
-APK2PCStudio.exe --no-browser          :: 只起服务，不弹浏览器
-APK2PCStudio.exe --launch "x.apk"      :: 直接对某个 APK 跑全流程
-APK2PCStudio.exe --headless-install    :: 只装配工具链后退出
+APK2PCStudio.exe                 :: 默认界面（按 exe 文件名决定）
+APK2PCStudio.exe --cli          :: 强制命令行向导
+APK2PCStudio.exe --web          :: 强制浏览器界面
+APK2PCStudio.exe --gui          :: 强制图形窗口（需带 tkinter 的构建）
+APK2PCStudio.exe --select       :: 弹界面选择菜单
+APK2PCStudio.exe --web --port 8788 --no-browser
+APK2PCStudio.exe --launch "D:\app.apk"        :: 直接装并运行某个 APK
+APK2PCStudio.exe --headless-install           :: 只装配工具链并注册 PATH
 ```
 
-### 生成单文件启动器
-
-在「产物」区点「生成启动器」：把当前 APK 焊进一个 exe，双击 → 自动开机 → 自动装包 → 拉起。
-启动器会读**同目录同名**的 `xxx.apk2pc.json`：
-
-```json
-{
-  "apk": "D:\\games\\demo.apk",
-  "label": "demo",
-  "package": "com.example.demo",
-  "activity": "com.example.demo.MainActivity",
-  "avd": "apk2pc_x86",
-  "fullscreen": false
-}
-```
-
-`fullscreen` 默认 `false` —— 部分机器上 `-fullscreen` 会让模拟器**秒退**，程序会自动降级重试一次，但没必要给自己找麻烦。
+快捷键（浏览器界面）：`Ctrl+Enter` 一键全流程，`Esc` 取消。
 
 ---
 
 ## 配置
 
-### `settings.json`
+设置保存在 `%LOCALAPPDATA%\APK2PCStudio\settings.json`，界面里改完自动保存。
 
-位置：`%LOCALAPPDATA%\APK2PCStudio\settings.json`（首次运行自动生成）
-
-| 字段 | 默认值 | 说明 |
+| 字段 | 默认值 | 作用 |
 |---|---|---|
-| `avd` | `apk2pc_x86` | 使用的 AVD 名称 |
-| `system_image` | `system-images;android-34;google_apis;x86_64` | 自动装配时装哪个系统镜像 |
-| `jadx_threads` | `4` | jadx 并发线程数；大包吃 CPU 时可调低 |
-| `quick_boot` | `true` | 允许模拟器读写快照（第二次起 10 s 级开机） |
-| `emu_extra_args` | `-no-boot-anim` | 追加给 emulator 的参数 |
-| `extra_apktool_args` | `""` | 追加给 apktool 的参数，例如 `--no-debug-info` |
-| `auto_start_emulator` | `true` | 没有在线设备时自动拉起模拟器 |
-| `last_apk` | `""` | 上次处理的 APK 路径（界面自动回填） |
+| `avd` | `apk2pc_x86` | 模拟器 AVD 名称 |
+| `system_image` | `...android-34...x86_64` | 系统镜像包名 |
+| `extra_apktool_args` | `""` | 传给 apktool 的额外参数 |
+| `emu_extra_args` | `-no-boot-anim` | 模拟器启动参数（默认允许快照快启） |
+| `quick_boot` | `true` | 允许从快照开机；起不来自动冷启重建 |
+| `jadx_threads` | `4` | 反编译线程数 |
+| `output_dir` | `""` | **成品输出目录**；空 = 程序目录下 `output\` |
+| `auto_start_emulator` | `true` | 需要时自动拉起模拟器 |
+| `last_apk` / `last_signed` / `last_workspace` | 自动 | 记住上次路径，下次直接回车复用 |
 
-### 环境变量
+**环境变量**
 
 | 变量 | 作用 |
 |---|---|
-| `APK2PC_HOME` | 覆盖数据根目录（默认 `%LOCALAPPDATA%\APK2PCStudio`）。想让整个工具跑在移动硬盘 / 别的盘上就设它 |
-| `JAVA_HOME` | 程序会主动探测 `java.exe`；探测到 javapath 壳目录会自动修正，但仍建议指向真实 JDK |
+| `APK2PC_HOME` | 覆盖数据目录（工具链 / 工作区 / 密钥库都放这） |
+| `APK2PC_RUNTIME` | 安卓 SDK 根目录；由程序自动登记，也可手动指定已有 SDK |
+| `APK2PC_TOOLPATHS` | 程序加入 PATH 的目录清单，用于精确复用与失效清理 |
+| `APK2PC_OUTPUT` | 成品输出目录（等价于 `output_dir`） |
+| `APK2PC_MODE` | 强制界面：`cli` / `web` / `gui` / `select` |
+| `JAVA_HOME` | JDK 路径；程序会自动修正只指向 javapath 壳目录的情况 |
 
-### 签名密钥
-
-首次签名会自动生成 `%LOCALAPPDATA%\APK2PCStudio\apk2pc-debug.keystore`：
-
-| 项 | 值 |
-|---|---|
-| alias | `apk2pc` |
-| 密码 | `android` |
-| 类型 | PKCS12，RSA 2048，有效期 10000 天 |
-
-> 这是**调试密钥**，公开且固定。它只适合自用/内测；要发布请换自己的密钥并妥善保管（重签后原版覆盖安装会失败，需先卸载）。
-
-### 数据目录总览
-
-```
-%LOCALAPPDATA%\APK2PCStudio\
-├─ tools\              apktool.jar / jadx-lib / build-tools
-├─ android-sdk\        emulator / system-images / platform-tools
-├─ workspace\          每次任务一个目录
-├─ logs\               模拟器启动日志（模拟器秒退时看这里）
-├─ apk2pc-debug.keystore
-└─ settings.json
-```
+**签名密钥**：`%LOCALAPPDATA%\APK2PCStudio\apk2pc-debug.keystore`
+（PKCS12 / RSA 2048 / 10000 天 / 别名 `apk2pc` / 口令 `android`）。仅用于本地调试安装，
+不要用在生产发布。日志写到 `%LOCALAPPDATA%\APK2PCStudio\logs\`。
 
 ---
 
-## 产物与目录结构
+## 产物与目录
 
-一次全流程结束后，工作区是这样：
-
-```
-workspace\<应用名>_<月日-时分秒>\
-├─ src\                 apktool 解包结果（res/ smali/ assets/ lib/ AndroidManifest.xml）
-├─ java\                jadx 反编译的 .java 源码
-├─ src-unsigned.apk     apktool 重建产物（未签名，装不上）
-├─ src-unsigned-aligned.apk   zipalign 之后（未签名）
-├─ src-unsigned-signed.apk    ★ 可直接安装
-├─ src-unsigned-signed.apk.idsig
-├─ gradle-project\      Android Studio 工程骨架（导出时生成）
-└─ launcher\            单文件启动器（导出时生成）
-```
-
-仓库本身的结构：
+一次全流程后（`<输出目录>/<应用名>/`）：
 
 ```
-apk2pc-studio/
-├─ app.py                入口：参数解析 / 启动器模式 / 服务启动
-├─ core/
-│  ├─ config.py          路径、工具发现、配置、环境快照
-│  ├─ provision.py       工具链装配（下载、解压、校验、自检）
-│  ├─ maven.py           迷你 Maven 解析器（拉 jadx 依赖树）
-│  ├─ apk.py             免解包的 APK 结构解析（包名/dex/ABI/壳提示）
-│  ├─ pipeline.py        六步流水线 + Job 管理 + Gradle 导出
-│  ├─ runtime.py         模拟器/adb：启动、探活、装机、拉起、截图
-│  ├─ launcher.py        单文件启动器：写入/读取/改写内嵌载荷
-│  ├─ server.py          本地 HTTP 服务与 API
-│  └─ runner.py          子进程执行、流式日志、下载（支持断点续传）
-├─ web/                  index.html / style.css / app.js（无框架）
-├─ tests/e2e.py          命令行端到端测试（decode / build / run）
-└─ docs/                 截图
+output/
+└─ <应用名>/
+   ├─ <应用名>-signed.apk        ← 唯一保留的可安装成品
+   └─ <应用名>.exe               ← 可选：内嵌该包的单文件启动器
 ```
 
-界面与后端之间是普通 HTTP API（`/api/state`、`/api/job`、`/api/export`、`/api/emulator` …），
-所以也可以写脚本直接驱动，不经过界面。
+工作区（默认 `%LOCALAPPDATA%\APK2PCStudio\workspace\<应用名>_<时间>\`）里是过程文件：
+
+```
+src/            apktool 解包结果（smali / res / AndroidManifest.xml，可改）
+java/           jadx 反编译的 Java 源码
+gradle-project/ 可选：Android Studio 工程骨架（AGP 8，模块 :app）
+launcher/       启动器产物
+```
+
+签名成功后 `unsigned.apk` / `aligned.apk` / `.idsig` **自动删除**，
+2 GB 级的包能省 4–5 GB 磁盘，只留一份成品。
+
+仓库结构：
+
+```
+app.py / gui_main.py     命令行与图形化版入口
+gui_app.py               tkinter 桌面窗口
+core/                    配置 / 流水线 / 装配 / 运行时 / 服务 / 环境变量 / 启动器
+web/                     本地网页界面（零依赖）
+build_exe.py             打单个 exe
+build_release.py         一次产出全部 6 个发布资产
+tests/e2e.py             端到端测试
+docs/                    运行截图
+```
 
 ---
 
 ## 常见问题
 
-<details>
-<summary><b>模拟器起不来 / 界面一直显示「无设备」</b></summary>
+<details><summary><b>双击后黑框闪一下就没了</b></summary>
 
-先看 `%LOCALAPPDATA%\APK2PCStudio\logs\emulator-*.log`。绝大多数是两类：
-
-1. **没开 WHPX**：设置 → 应用 → 可选功能 → 更多 Windows 功能 → 勾「Windows 虚拟机监控程序平台」→ 重启；
-2. **加了 `-fullscreen`**：部分机器上会秒退。程序会自动降级重试，但建议直接把全屏关掉。
+v1.2.0 起顶层有异常兜底：任何启动期错误都会打印中文原因 + 堆栈并**停住等你按回车**，
+不会静默退出。若仍闪退，到 `%LOCALAPPDATA%\APK2PCStudio\logs\` 看日志，
+或在 cmd 里运行 exe 把输出截图给我。
 </details>
 
-<details>
-<summary><b>装机报 <code>INSTALL_FAILED_INSUFFICIENT_STORAGE</code></b></summary>
+<details><summary><b>一直显示「等待开机… 无设备」</b></summary>
 
-AVD 数据分区不够。改 `~/.android/avd/<avd名>.avd/config.ini`：
+模拟器进程秒退了。常见原因：勾选了「模拟器全屏」（部分机器 + swiftshader 会直接崩，
+**默认已不勾**）、WHPX 没启用、C 盘空间不足建不出数据分区。
+程序现在会把模拟器输出写到 `logs/emulator-*.log`，并把失败原因直接打在界面上；
+全屏失败会自动改窗口模式重试一次。
+</details>
 
-```ini
-disk.dataPartition.size=8G
+<details><summary><b>装包报 INSUFFICIENT_STORAGE / 签名冲突 / VERSION_DOWNGRADE</b></summary>
+
+- 空间不足：大包需要更大的 AVD 数据分区（默认 8G）；清一下 C 盘回收站再冷启。
+- 签名冲突 / 版本降级：程序会**自动卸载旧包再装**，无需手工处理。
+</details>
+
+<details><summary><b>解包后 smali 是空的 / 没有 Java 源码</b></summary>
+
+大概率是**加固壳**（360 / 乐固 / 梆梆 / 爱加密）：dex 被加密，需要先脱壳。
+本工具不提供脱壳能力。另外 jadx 若缺 jar 会静默失败，程序装配后会自检 `--version`，
+不通过则自动回落到 androguard。
+</details>
+
+<details><summary><b>Java 源码能直接 gradle build 吗</b></summary>
+
+不能。反编译产物含混淆、内联、资源 id、native 依赖，`gradle-project/` 只是方便阅读与
+对照的骨架，不是可编译工程。真正能装能跑的是**重建签名的 APK**。
+</details>
+
+<details><summary><b>换台电脑 / 换输出目录，运行时要重下吗</b></summary>
+
+同一台电脑不用：位置已写进用户环境变量，所有版本与启动器共享。
+换电脑时会重新询问位置，指到已有的安卓 SDK 目录即可复用，不会重复下载。
+</details>
+
+<details><summary><b>中文路径 / 中文应用名</b></summary>
+
+支持。控制台强制 UTF-8，界面与文件名都做了清洗与转义。
+</details>
+
+---
+
+## 从源码构建
+
+```bat
+python build_exe.py                :: 单个 exe（命令行/浏览器/选择器共用）
+python build_exe.py --onedir       :: 目录形式
+python build_release.py            :: 一次产出 6 个发布资产
 ```
 
-改完 `adb emu kill` 再启动。注意宿主要能腾出对应空间，否则会报 `Not enough space to create userdata partition`。
-</details>
+`build_release.py` 需要系统里有一份**带 tkinter** 的完整 Python（3.13/3.14）来打 GUI 版，
+且 PyInstaller ≥ 6.22.3（旧版无法正确收集 Tcl/Tk 9 的数据目录）。源码包由 `git archive`
+生成，天然排除 `dist/`、`build/`、`*.apk` 与密钥。
 
-<details>
-<summary><b>解包出来 smali 是空的 / Java 一个文件都没有</b></summary>
-
-大概率是加固壳（360、腾讯乐固、梆梆、爱加密）。壳把 dex 加密了，`classes*.dex` 根本不存在，apktool 和 jadx 都无从下手 —— 这不是工具的锅，得先脱壳。
-
-界面在「解析」阶段就会提示 `疑似加固/壳`。
-</details>
-
-<details>
-<summary><b>jadx 没产出，但退出码是 1 且没有任何报错</b></summary>
-
-典型的**依赖缺失**（例如少了 `logback-core`）。程序在装配后会跑一次 `--version` 自检，失败则标记损坏并回落到 androguard；你可以点「重新装配」修好它。
-</details>
-
-<details>
-<summary><b>重签名的包装不上，提示签名不一致</b></summary>
-
-只能先卸载原版：`adb uninstall <包名>`。程序在检测到 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 时会自动这么做。
-</details>
-
-<details>
-<summary><b>导出的 Gradle 工程能直接 build 吗？</b></summary>
-
-**不能。** jadx 的输出经过混淆还原、内联、资源 id 重排，加上 native 依赖，直接 `gradle build` 几乎必然失败。这个工程是给你**读代码和继续改**的骨架，不是一键出包。
-</details>
-
-<details>
-<summary><b>中文路径 / 长路径有问题吗？</b></summary>
-
-工作区路径含中文可以正常跑（本机实测路径里就有中文）。但 APK 文件名建议避免空格和特殊符号，某些工具的 stderr 解析会受影响。
-</details>
+已实测：2.47 GB 的真实游戏包重建 + 自签名后装机成功并进入主界面；
+单文件 exe 冷启动约 0.7 s；全流程中间副本自动清理释放 4.62 GB。
 
 ---
 
-## 兼容性与实测
+## 合规
 
-本机环境：**Windows 11 + JDK 21 + Android 14 (API 34) x86_64 模拟器**。
-
-| 环节 | 结果 |
-|---|---|
-| apktool 解包真实 APK | ✔ 3769 个 smali，包名 / 启动 Activity 自动识别 |
-| jadx 反编译 | ✔ 2327 个 `.java`（依赖从 Maven 中央仓解析） |
-| apktool 重建 + aapt2 | ✔ 输出 unsigned.apk |
-| zipalign + apksigner v1/v2/v3 | ✔ 证书校验通过 |
-| 自签名包装进模拟器 | ✔ Success（并自动处理签名冲突） |
-| **2.47 GB 真实游戏包重建 + 自签名** | ✔ 装机 Success → 进入游戏主界面 |
-| 单文件启动器（APK 内嵌 exe） | ✔ 解出的载荷 SHA-256 与原 APK 一致 |
-| 程序冷启动 | ✔ onedir 0.68 s / onefile 0.69 s（三次 0.66–0.71 s） |
-
-**尚未验证**：ARM-only 应用在 x86_64 镜像上的转译表现（取决于镜像自带 ARM 转译层）；Mac/Linux 未适配。
-
----
-
-## 合规声明
-
-本项目是**逆向工程与打包流程的自动化胶水**，不提供任何破解、去壳、绕过授权的能力。
-
-请仅用于**你自己拥有合法授权**的应用：自研应用、开源应用、公司内部包、你有权修改的二次开发对象。
-用它处理第三方商业应用并分发，风险与责任由使用者承担，与本项目无关。
+仅用于**你自己拥有合法授权**的应用（自研、开源、内部包、有授权的二次开发）。
+本工具不提供破解、脱壳、绕过授权或规避签名校验的能力。
+第三方工具的许可归各自项目所有（apktool / jadx / Android SDK 等）。
 
 ---
 
 ## 参考
 
-- [apktool](https://apktool.org/) —— 解包 / 重建的事实标准
-- [jadx](https://github.com/skylot/jadx) —— dex → Java 反编译器
-- [Android 命令行工具](https://developer.android.com/studio#command-line-tools-only) —— build-tools / platform-tools / emulator
-- [APK2EXE](https://github.com/doxo46/APK2EXE-) —— 「EXE = 启动器 + APK」这个思路的先行者（它用 WSA，本项目用 AVD 模拟器）
+- [APK2EXE](https://github.com/doxo46/APK2EXE-) —— 共享运行时 + 轻量启动器的思路
+- [apktool](https://apktool.org/) · [jadx](https://github.com/skylot/jadx) ·
+  [androguard](https://github.com/androguard/androguard)

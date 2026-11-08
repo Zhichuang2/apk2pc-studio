@@ -79,8 +79,12 @@ def log(level: str, text: str) -> None:
     say(f"{tag} {text}")
 
 
-def ensure_tools(action: str, logfn) -> None:
-    """按动作装配，不一次性把 2 GB 模拟器全拉下来。"""
+def ensure_tools(action: str, logfn, askfn=None) -> None:
+    """按动作装配，不一次性把 2 GB 模拟器全拉下来。
+
+    askfn 可注入：CLI 用控制台 input()，GUI 用弹窗输入框，逻辑共用一份。
+    """
+    askfn = askfn or ask
     provision.ensure_apktool(logfn)
     if action in ("full", "decode", "java"):
         try:
@@ -90,7 +94,7 @@ def ensure_tools(action: str, logfn) -> None:
     if action in ("full", "build", "launcher"):
         provision.ensure_buildtools(logfn)
     if action in ("full", "run"):
-        root, need_install = provision.resolve_runtime(ask, logfn)
+        root, need_install = provision.resolve_runtime(askfn, logfn)
         if root is None:
             raise RuntimeError("没能确定安卓模拟器位置")
         if need_install:

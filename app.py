@@ -164,6 +164,82 @@ def _autorun_web(cfg: dict) -> None:
     server.LAUNCH = {"job": job.id, "title": f"启动 {cfg.get('label', apk.stem)}"}
 
 
+def detect_mode() -> str:
+    """决定「双击、不带参数」时进哪个界面。
+
+    优先级：APK2PC_MODE 环境变量 > exe 文件名后缀 > 默认 cli。
+    源码态（python app.py）与旧启动器一律 cli，保证既有行为不变。
+    """
+    env = (os.environ.get("APK2PC_MODE") or "").strip().lower()
+    if env in ("cli", "web", "gui", "select"):
+        return env
+    if C.is_frozen():
+        stem = Path(sys.executable).stem.lower()
+        if "-web" in stem:
+            return "web"
+        if "-gui" in stem:
+            return "gui"
+        if "-cli" in stem:
+            return "cli"
+        if "allinone" in stem or stem == "apk2pcstudio":
+            return "select"
+    return "cli"
+
+
+def _gui_exe() -> Path | None:
+    """三合一包里同目录的独立图形化版（GUI 版用单独的 Python 打包）。"""
+    here = Path(sys.executable).parent
+    for name in ("APK2PCStudio-GUI.exe", "*-GUI.exe"):
+        hits = sorted(here.glob(name))
+        if hits:
+            return hits[0]
+    return None
+
+
+def start_gui(mode_args) -> int:
+    """启动图形化版：本进程若带 tkinter 就直接开窗口，否则拉起独立 GUI exe。"""
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        exe = _gui_exe()
+        if not exe:
+            print("未找到图形化版：请下载 APK2PCStudio-GUI.exe 放在同一目录。")
+            _pause()
+            return 1
+        print(f"正在打开图形化版：{exe.name}")
+        try:
+            os.startfile(str(exe))  # type: ignore[attr-defined]
+            return 0
+        except Exception as e:  # noqa: BLE001
+            print(f"✘ 启动失败：{e}")
+            _pause()
+            return 1
+    from gui_app import run_gui
+    return run_gui(mode_args)
+
+
+def run_select(args, cfg: dict) -> int:
+    """三合一入口：让用户选一个界面，之后不再重复问。"""
+    from core.cli import ask
+    print("=" * 60)
+    print(f"  {C.APP_TITLE} {C.APP_VERSION}  ·  选择界面")
+    print("=" * 60)
+    print("  1) 命令行向导   黑框菜单，最省资源（默认，直接回车）")
+    print("  2) 浏览器界面   功能最全，会自动打开网页")
+    print("  3) 图形窗口     像普通软件一样的窗口，能点按钮")
+    print("  0) 退出")
+    print("-" * 60)
+    c = ask("请选择 [1]: ", "1").strip() or "1"
+    if c == "0":
+        return 0
+    if c == "2":
+        return run_web(args, cfg)
+    if c == "3":
+        return start_gui(args)
+    from core.cli import run_cli
+    return run_cli()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="APK2PC Studio")
     ap.add_argument("--launch", help="直接运行指定 APK（模拟器内）")
@@ -172,6 +248,8 @@ def main() -> int:
     ap.add_argument("--no-browser", action="store_true", help="浏览器界面下不自动打开浏览器")
     ap.add_argument("--headless-install", action="store_true", help="只装配工具链并注册 PATH 后退出")
     ap.add_argument("--cli", action="store_true", help="强制进入命令行向导")
+    ap.add_argument("--gui", action="store_true", help="强制进入图形窗口界面")
+    ap.add_argument("--select", action="store_true", help="显示界面选择菜单")
     args = ap.parse_args()
 
     if args.headless_install:
@@ -192,12 +270,23 @@ def main() -> int:
         cfg = {**cfg, "apk": args.launch, "label": Path(args.launch).stem}
 
     # 启动器 / --launch：走轻量无人值守，不占端口、不开浏览器
-    if cfg.get("apk") and not args.web and not args.cli:
+    if cfg.get("apk") and not args.web and not args.cli and not args.gui and not args.select:
         return run_unattended(cfg)
 
+    if args.select:
+        return run_select(args, cfg)
+    if args.gui:
+        return start_gui(args)
     if args.web:
         return run_web(args, {} if args.cli else cfg)
 
+    mode = "cli" if args.cli else detect_mode()
+    if mode == "select":
+        return run_select(args, cfg)
+    if mode == "web":
+        return run_web(args, cfg)
+    if mode == "gui":
+        return start_gui(args)
     from core.cli import run_cli
     return run_cli()
 
