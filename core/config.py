@@ -128,6 +128,9 @@ DEFAULTS = {
     "last_workspace": "",
     "output_dir": "",          # 空 = 程序自身目录下 output\
     "auto_start_emulator": True,
+    # 实验性：轻量运行时静态评估（默认关）。不实现运行时本体，
+    # 只产出判定报告与清单；实际运行恒回落标准安卓运行时。
+    "beta_light_runtime": False,
 }
 
 

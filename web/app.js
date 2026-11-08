@@ -67,6 +67,10 @@ function renderEnv(s) {
   }
   const oh = $("#output-hint");
   if (oh) oh.textContent = "当前：" + (s.output_dir || "—");
+  const bl = $("#opt-beta-light");
+  if (bl && document.activeElement !== bl) {
+    bl.checked = !!(s.settings && s.settings.beta_light_runtime);
+  }
 
   const tools = s.tools || [];
   const okCount = tools.filter((t) => t.ok).length;
@@ -235,6 +239,7 @@ const STEP_TPL = {
   java: ["准备工作区", "反编译为 Java 源码"],
   build: ["apktool 重建 APK", "zipalign + 签名"],
   run: ["安装并运行在电脑上"],
+  light: ["静态扫描 APK 依赖", "生成 BETA 评估报告"],
   provision: ["下载并装配组件"],
 };
 
@@ -275,6 +280,7 @@ async function startJob(action, extra) {
     apk: S.apk,
     fullscreen: $("#opt-fullscreen").checked,
     serial: null,
+    decoded: (S.result && S.result.decoded) || null,
   }, extra || {});
 
   let r;
@@ -392,6 +398,7 @@ function renderArtifacts() {
   if (r.java) bits.push("Java ✓");
   if (r.signed) bits.push("签名 APK ✓");
   if (r.serial) bits.push("已运行 @ " + r.serial);
+  if (r.report) bits.push("BETA 报告 ✓");
   const line = $("#artifact-line");
   line.textContent = bits.length ? bits.join(" · ") : "尚未生成产物";
   line.style.color = bits.length ? "var(--acc)" : "";
@@ -490,6 +497,17 @@ function bind() {
   $("#btn-open-out").onclick = () => {
     const p = (S.result && (S.result.out_dir || S.result.workspace)) || (S.env && S.env.workspace);
     if (p) fetch(`/api/open?path=${encodeURIComponent(p)}`);
+  };
+  $("#btn-open-report").onclick = () => {
+    const p = S.result && S.result.report;
+    if (p) fetch(`/api/open?path=${encodeURIComponent(p)}`);
+    else toast("先跑一次「BETA 轻量评估」", "warn");
+  };
+  $("#opt-beta-light").onchange = async () => {
+    const v = $("#opt-beta-light").checked;
+    const r = await api("/api/settings", { beta_light_runtime: v });
+    if (r && r.error) toast("保存失败：" + r.error, "err");
+    else toast(v ? "BETA 已开启：全流程会附带静态评估" : "BETA 已关闭", "");
   };
   $("#btn-quit").onclick = async () => {
     if (confirm("退出 APK2PC Studio？")) { await api("/api/shutdown", {}); window.close(); }

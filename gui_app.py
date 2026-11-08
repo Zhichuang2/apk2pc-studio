@@ -19,6 +19,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from core import apk as apkmod
 from core import cli as climod
 from core import config as C
+from core import lightmode
 from core import pipeline, provision
 
 _TAGS = {
@@ -53,6 +54,9 @@ class GuiApp:
         self.emit("ok", f"{C.APP_TITLE} {C.APP_VERSION} 已就绪")
         self.emit("info", f"成品目录：{C.output_dir()}")
         self.emit("info", "第一次使用会询问安卓模拟器位置并登记，之后所有版本共享、不会重复下载。")
+        self.emit("info", "BETA 轻量运行时："
+                         + ("开（全流程会附带评估）" if lightmode.enabled() else "关")
+                         + "；点「BETA 轻量评估」可单独扫描，不启动模拟器。")
         root.after(100, self._drain)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -100,6 +104,7 @@ class GuiApp:
             ("生成单文件启动器", "launcher", False),
             ("环境检查 / 补装", "env", False),
             ("清理无用数据", "clean", False),
+            ("BETA 轻量评估", "light", False),
         ]
         self.buttons: list[ttk.Button] = []
         for i, (label, key, accent) in enumerate(self.actions):
@@ -259,10 +264,10 @@ class GuiApp:
         # tk 变量只能在主线程读：先取出字符串，再交给后台线程
         apk_raw = self.apk_var.get().strip().strip('"')
         # launcher / env / clean 不强求先选 APK（launcher 优先用上次签名成品）
-        if key in ("full", "decode", "build") and not apk_raw:
+        if key in ("full", "decode", "build", "light") and not apk_raw:
             messagebox.showwarning("还没选 APK", "先点「浏览…」选一个 .apk 文件")
             return
-        if key in ("full", "decode", "build") and apk_raw:
+        if key in ("full", "decode", "build", "light") and apk_raw:
             p = Path(apk_raw)
             if not p.exists() or p.suffix.lower() != ".apk":
                 messagebox.showerror("文件不对", f"找不到或不是 .apk：{p}")
@@ -287,11 +292,19 @@ class GuiApp:
                 apk = Path(apk_raw)
                 C.settings["last_apk"] = str(apk)
                 C.settings.save()
-                self.emit("info", "检查工具链（已装过的直接复用，不会重复下载）…")
-                climod.ensure_tools(key, self.emit, askfn=self._gui_ask)
-                params = {"apk": str(apk)}
-                if key == "build":
-                    params = self._build_params(apk)
+                if key == "light":
+                    # 纯静态评估：不装配工具链、不启动模拟器、不下载运行时
+                    self.emit("info", "BETA 轻量运行时评估（纯静态扫描，不启动模拟器）…")
+                    params = {"apk": str(apk)}
+                    ws = self._last_workspace()
+                    if ws:
+                        params["decoded"] = str(ws)
+                else:
+                    self.emit("info", "检查工具链（已装过的直接复用，不会重复下载）…")
+                    climod.ensure_tools(key, self.emit, askfn=self._gui_ask)
+                    params = {"apk": str(apk)}
+                    if key == "build":
+                        params = self._build_params(apk)
                 ok, result = self._run_job(key, params)
         except Exception as e:  # noqa: BLE001
             self.emit("error", f"{type(e).__name__}: {e}")
@@ -341,7 +354,8 @@ class GuiApp:
                 else:
                     self.emit("warn", f"结束（{snap['status']}）")
                 for k, label in (("decoded", "解包目录"), ("java", "Java 源码"),
-                                 ("artifact", "成品"), ("launcher", "独立启动器")):
+                                 ("artifact", "成品"), ("launcher", "独立启动器"),
+                                 ("report", "BETA 评估报告"), ("report_json", "轻量清单")):
                     if snap["result"].get(k):
                         self.emit("info", f"{label}：{snap['result'][k]}")
                 return snap["status"] == "ok", snap.get("result", {})

@@ -113,10 +113,14 @@ window.addEventListener("unhandledrejection", function (ev) {
             <button class="btn sm" data-act="java">仅 Java</button>
             <button class="btn sm" data-act="build">重建签名</button>
             <button class="btn sm" data-act="run">直接运行</button>
+            <button class="btn sm" data-act="light" title="实验性：不启动模拟器，静态扫描依赖并出评估报告">BETA 轻量评估</button>
           </div>
           <button class="btn danger sm hidden" id="btn-cancel">取消</button>
         </div>
         <div class="hint sm" id="run-hint">全流程 = 解包 → Java 源码 → 重建 → 签名 → 装机运行</div>
+        <label class="check sm" title="实验性：全流程附带静态评估；不实现轻量运行时本体，运行仍用标准安卓运行时">
+          <input type="checkbox" id="opt-beta-light"> BETA 轻量运行时（仅静态评估，不替代模拟器）
+        </label>
         <div class="progress"><div class="bar" id="bar"></div></div>
       </section>
 
@@ -148,6 +152,7 @@ window.addEventListener("unhandledrejection", function (ev) {
             <button class="btn sm block" id="btn-export-gradle">生成 Android Studio 工程</button>
             <button class="btn sm block" id="btn-export-launcher">生成独立 EXE 启动器</button>
             <button class="btn ghost sm block" id="btn-open-out">打开输出目录</button>
+            <button class="btn ghost sm block" id="btn-open-report">打开 BETA 评估报告</button>
             <p class="muted xs" id="artifact-line">尚未生成产物</p>
           </div>
           <div class="shot-box">

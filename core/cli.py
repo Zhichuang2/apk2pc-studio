@@ -11,6 +11,7 @@ from pathlib import Path
 from . import apk as apkmod
 from . import config as C
 from . import envpath
+from . import lightmode
 from . import pipeline, provision
 
 MENU = """\
@@ -24,6 +25,7 @@ MENU = """\
   5) 生成启动器   把重建签名的 APK 做成「双击就能跑」的单个 EXE
   6) 输出位置     查看 / 切换成品路径（默认程序目录下的 output\\）
   7) 清理垃圾     删掉中间副本 / 旧构建残留，腾出磁盘
+  8) BETA 选项    轻量运行时评估：不装模拟器，扫描依赖并出报告（实验性）
   0) 退出
 ------------------------------------------------------------"""
 
@@ -140,7 +142,9 @@ def show_result(res: dict) -> None:
     for key, label in (("decoded", "解包目录（可改 smali / res）"),
                        ("java", "Java 源码"),
                        ("signed", "重建并签名的 APK"),
-                       ("artifact", "成品（交付用）")):
+                       ("artifact", "成品（交付用）"),
+                       ("report", "BETA 评估报告"),
+                       ("report_json", "轻量运行时清单")):
         if res.get(key):
             say(f"  {label}: {res[key]}")
     if res.get("out_dir"):
@@ -319,6 +323,33 @@ def action_clean() -> None:
     say("  提示：中间副本现在在签名成功后会自动删除，一般不用手动清。")
 
 
+def action_beta() -> None:
+    """实验性开关：不启动模拟器、不下载任何运行时。"""
+    say("\n== BETA 轻量运行时（实验性）==")
+    say("  拆包后静态扫描 ABI / native so / GMS / 图形栈 / 反射等依赖，并出评估报告。")
+    say("  不调用 Java、不启动模拟器、不下载运行时；产物比模拟器大就放弃这条路。")
+    say("  当前版本不实现轻量运行时本体，实际运行一律回落标准安卓运行时。")
+    state = "开" if lightmode.enabled() else "关"
+    say(f"  当前开关：{state}（也可设环境变量 APK2PC_BETA_LIGHT=1）")
+    choice = ask("  1) 切换开关   2) 评估一个 APK   0) 返回  [2]: ", "2")
+    if choice == "1":
+        lightmode.set_enabled(not lightmode.enabled())
+        say(f"✔ 开关已切换为：{'开' if lightmode.enabled() else '关'}")
+        return
+    if choice != "2":
+        return
+    apk = ask_apk_path()
+    if not apk:
+        return
+    params = {"apk": str(apk)}
+    ws = _last_workspace()
+    if ws:
+        params["decoded"] = ws
+    say("\n纯静态扫描中（不启动模拟器）…")
+    ok, res = run_job("light", params)
+    show_result(res)
+
+
 def _last_workspace() -> str:
     ws = C.WORKSPACE
     try:
@@ -357,8 +388,10 @@ def run_cli() -> int:
                 action_output()
             elif choice == "7":
                 action_clean()
+            elif choice == "8":
+                action_beta()
             else:
-                say("输入 0-7 就行")
+                say("输入 0-8 就行")
                 continue
         except (KeyboardInterrupt, SystemExit):
             say("\n已取消")

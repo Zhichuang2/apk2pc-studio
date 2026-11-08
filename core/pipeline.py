@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import apk as apkmod
 from . import config as C
+from . import lightmode
 from . import provision
 from . import runtime
 from .runner import LogFn, popen_capture, run, win_bat
@@ -135,6 +136,8 @@ class JobManager:
             ("sign", "zipalign + 签名"),
             ("run", "安装并运行在电脑上"),
         ]
+        if kind == "light":
+            return [("scan", "静态扫描 APK 依赖"), ("report", "生成 BETA 评估报告")]
         if kind == "full":
             return base
         if kind == "decode":
@@ -158,6 +161,7 @@ class JobManager:
             "java": f"Java 反编译 · {name}",
             "build": f"重建签名 · {name}",
             "run": f"运行 · {name}",
+            "light": f"BETA 轻量评估 · {name}",
             "provision": "装配工具链 / 运行时",
         }.get(kind, name)
 
@@ -185,6 +189,7 @@ class JobManager:
                     "java": run_java_only,
                     "build": run_build_only,
                     "run": run_only,
+                    "light": run_light_only,
                     "full": run_full,
                 }[job.kind]
                 runner(job)
@@ -414,6 +419,12 @@ def step_sign(job: Job, unsigned: Path, root: Path) -> Path:
 
 def step_run(job: Job, apk_file: Path, info: dict) -> None:
     job.begin("run")
+    verdict = job.result.get("light_verdict")
+    if lightmode.enabled() and verdict:
+        if verdict == "fallback":
+            job.log("warn", "BETA：依赖判定不通过 → 已自动回落到标准安卓运行时（成品不受影响）")
+        else:
+            job.log("info", "BETA：静态判定通过，轻量清单已产出；当前版本仍回落标准运行时运行")
     if not C.adb_exe():
         raise PipelineError("缺少 adb")
     serial = runtime.pick_serial(job.params.get("serial"))
@@ -472,10 +483,71 @@ def step_run(job: Job, apk_file: Path, info: dict) -> None:
 
 # ---------------------------------------------------------------- 组合流程
 
+def run_light_only(job: Job) -> None:
+    """BETA 独立入口：纯静态评估，不调用 Java / apktool / adb / 模拟器。"""
+    apk_path = Path(job.params["apk"])
+    if not apk_path.is_file():
+        raise PipelineError(f"找不到 APK：{apk_path}")
+    raw = job.params.get("decoded") or ""
+    decoded = Path(raw) if raw and Path(raw).is_dir() else None
+
+    job.begin("scan")
+    report = lightmode.evaluate(apk_path, decoded, job.params.get("info"))
+    job.result["apk"] = str(apk_path)
+    job.result["light_verdict"] = report["verdict"]
+    job.result["light"] = {
+        "verdict": report["verdict"], "verdict_text": report["verdict_text"],
+        "score": report["score"], "blockers": report["blockers"],
+        "estimate": report["estimate"], "abi": report["abi"],
+    }
+    job.log("info", f"DEX {report['dex']['count']} 个 / {report['dex']['mb']} MB · "
+                    f"native so {report['native']['count']} 个 · "
+                    f"ABI {', '.join(report['abi']) or '无'}")
+    job.ok_step("scan", f"{report['entries']} 个条目，评分 {report['score']}/100")
+
+    job.begin("report")
+    md, js = lightmode.write_report(report, C.output_dir(), report["label"])
+    job.result["report"] = str(md)
+    job.result["report_json"] = str(js)
+    job.result["out_dir"] = str(md.parent)
+    job.log("ok", f"结论：{report['verdict_text']}")
+    for b in report["blockers"]:
+        job.log("warn", f"  {b['code']}：{b['text']}")
+    e = report["estimate"]
+    job.log("info", f"估算产物 {e['asset_mb']} MB · 1 GB 阈值"
+                    f"{'已触发' if e['over_size_limit'] else '未触发'} · "
+                    f"共享运行时 {e['shared_runtime_mb']} MB（{e['shared_runtime_source']}）")
+    job.log("ok", f"报告：{md}")
+    job.log("info", "当前版本尚未实现轻量运行时；实际运行一律回落标准安卓运行时。")
+    job.ok_step("report", md.name)
+
+
+def attach_light_report(job: Job, apk_path: Path, decoded: Path | None) -> None:
+    """全流程附带评估：开关关掉 / 评估失败都不影响主流程。"""
+    if not lightmode.enabled():
+        return
+    try:
+        report = lightmode.evaluate(apk_path, decoded, job.result.get("info"))
+        md, js = lightmode.write_report(report, C.output_dir(), report["label"])
+        job.result["light_verdict"] = report["verdict"]
+        job.result["report"] = str(md)
+        job.result["report_json"] = str(js)
+        job.log("info", f"BETA 轻量运行时评估：{report['verdict_text']}"
+                        f"（评分 {report['score']}/100）")
+        if report["verdict"] == "fallback":
+            reasons = "; ".join(b["code"] for b in report["blockers"][:4]) or "依赖不满足"
+            job.log("warn", f"BETA：依赖判定不通过（{reasons}），"
+                            "运行阶段将自动回落到标准安卓运行时")
+        job.log("ok", f"BETA 报告：{md}")
+    except Exception as e:  # noqa: BLE001
+        job.log("warn", f"BETA 评估跳过（不影响主流程）：{type(e).__name__}: {e}")
+
+
 def run_decode_only(job: Job) -> None:
     apk_path = Path(job.params["apk"])
     root = step_prepare(job, apk_path)
-    step_decode(job, apk_path, root)
+    out = step_decode(job, apk_path, root)
+    attach_light_report(job, apk_path, out)
     _check_cancel(job)
     step_java(job, apk_path, root)
 
@@ -518,7 +590,8 @@ def run_full(job: Job) -> None:
     apk_path = Path(job.params["apk"])
     root = step_prepare(job, apk_path)
     _check_cancel(job)
-    step_decode(job, apk_path, root)
+    out = step_decode(job, apk_path, root)
+    attach_light_report(job, apk_path, out)
     _check_cancel(job)
     step_java(job, apk_path, root)
     _check_cancel(job)
