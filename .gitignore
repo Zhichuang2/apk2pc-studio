@@ -1,7 +1,9 @@
 # 构建产物
 build/
+build_*/
 build.old*/
 dist/
+dist_*/
 *.spec
 __pycache__/
 *.py[cod]
