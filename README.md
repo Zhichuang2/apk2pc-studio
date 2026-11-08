@@ -3,7 +3,6 @@
 把 APK **解包 → 还原 Java 源码 → 重建签名 → 在电脑上跑起来**，一条流水线全自动。
 程序只是辅助，**输出的成品才是重点**：改过的包能重新打包、能装、能生成双击即用的单文件启动器。
 
-![在 Windows 里运行](docs/重建包运行.png)
 
 > APK 不能编译成原生 Windows EXE —— 它依赖 Android 运行时。本工具的做法是
 > 「重建签名后的 APK + 自动托管的安卓模拟器 + 单文件启动器」，让你在电脑上双击就能用。
@@ -46,7 +45,7 @@
 
 ## 下载与安装
 
-去 [Releases](https://github.com/Zhichuang2/apk2pc-studio/releases) 下载，共 6 个资产：
+去 [发布](https://github.com/Zhichuang2/apk2pc-studio/releases) 下载，共 6 个资产：
 
 | 资产 | 说明 |
 |---|---|
